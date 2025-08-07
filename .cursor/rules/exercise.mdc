@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+We have been assigned an exercise. It can be found in png format in [data-science-exercise-1.png](mdc:data-science-exercise/data-science-exercise-1.png) and [data-science-exercise-2.png](mdc:data-science-exercise/data-science-exercise-2.png)
+We already have a [draft.md](mdc:draft.md)
+You will be asked to expand or rewrite certain parts, or to implement some code.
+You may be asked to clarify some points. In that case, you should also make it more clear in the draft.
+Every time you need to remember that we are working on the exercise to stay focus
+We will code in python, for which you will be required to use virtual environments.
