@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"name": "datasets",
+			"path": "../datasets"
+		},
+		{
+			"name": "mongodb-exploration",
+			"path": "../mongodb-exploration"
+		},
+		{
+			"name": "Sparkov_Data_Generation",
+			"path": "../Sparkov_Data_Generation"
+		},
+		{
+			"name": "sapira_ai_exercise",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

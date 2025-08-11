@@ -10,3 +10,25 @@ node_modules
 .vscode
 
 .venv
+data
+*.log
+*.json
+*.csv
+*.txt
+*.pdf
+*.docx
+*.doc
+*.xls
+*.xlsx
+*.pptx
+*.ppt
+
+pycache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzw

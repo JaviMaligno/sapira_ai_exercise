@@ -1,0 +1,57 @@
+### Source: ieee_transaction
+
+- Total rows scanned: 200000
+- Label distribution: 0=193976, 1=6024 (fraud rate ~ 3.0120%)
+- Time coverage (approx): 1970-01-02T00:00:00+00:00 → 1970-02-22T17:40:19+00:00 UTC
+
+- Top columns by missingness (10):
+  - dist2: missing ~ 92.24%
+  - email_domain_receiver: missing ~ 68.18%
+  - dist1: missing ~ 65.82%
+  - email_domain_payer: missing ~ 16.08%
+  - addr2: missing ~ 10.70%
+  - addr1: missing ~ 10.70%
+  - card2: missing ~ 1.51%
+  - card5: missing ~ 0.53%
+  - card4: missing ~ 0.00%
+  - card6: missing ~ 0.00%
+
+- Selected column summaries:
+  - amount: fill=100.00%, dtypes=['float64']
+    - stats: min=0.292, p50≈N/A, max=5278.95, mean=129.829, std=207.672
+    - top: 100.0 (3241), 50.0 (2782), 59.0 (2061), 117.0 (1933), 57.95 (1536)
+  - email_domain_payer: fill=83.92%, dtypes=['object']
+    - top: gmail.com (22119), yahoo.com (9675), hotmail.com (5020), anonymous.com (4369), aol.com (2821)
+  - email_domain_receiver: fill=31.82%, dtypes=['object']
+    - top: gmail.com (20029), anonymous.com (8611), hotmail.com (7752), yahoo.com (5040), aol.com (1991)
+  - card1: fill=100.00%, dtypes=['int64']
+    - stats: min=1001.0, p50≈N/A, max=18396.0, mean=9863.299, std=4914.177
+    - top: 7919 (1176), 9500 (1050), 15885 (935), 6019 (844), 17188 (838)
+  - card2: fill=98.49%, dtypes=['float64']
+    - stats: min=100.0, p50≈N/A, max=600.0, mean=367.834, std=158.880
+    - top: 321.0 (4042), 111.0 (3910), 555.0 (3566), 490.0 (3053), 583.0 (2676)
+  - card3: fill=100.00%, dtypes=['float64']
+    - stats: min=100.0, p50≈N/A, max=231.0, mean=153.308, std=11.440
+    - top: 150.0 (44059), 185.0 (4980), 144.0 (127), 106.0 (119), 146.0 (84)
+  - card4: fill=100.00%, dtypes=['object']
+    - top: visa (32949), mastercard (15169), american express (1216), discover (666)
+  - card5: fill=99.47%, dtypes=['float64']
+    - stats: min=100.0, p50≈N/A, max=237.0, mean=200.398, std=40.543
+    - top: 226.0 (25826), 224.0 (6452), 166.0 (4170), 102.0 (2696), 117.0 (1908)
+  - card6: fill=100.00%, dtypes=['object']
+    - top: debit (34373), credit (15622), charge card (3), debit or credit (2)
+  - addr1: fill=89.30%, dtypes=['float64']
+    - stats: min=100.0, p50≈N/A, max=540.0, mean=291.099, std=102.160
+    - top: 299.0 (4768), 204.0 (4030), 325.0 (4024), 264.0 (3646), 330.0 (2260)
+  - addr2: fill=89.30%, dtypes=['float64']
+    - stats: min=10.0, p50≈N/A, max=102.0, mean=86.601, std=3.782
+    - top: 87.0 (49237), 60.0 (560), 96.0 (96), 32.0 (20), 31.0 (15)
+  - dist1: fill=34.18%, dtypes=['float64']
+    - stats: min=0.0, p50≈N/A, max=7068.0, mean=127.049, std=387.708
+    - top: 0.0 (3964), 1.0 (3589), 2.0 (3425), 4.0 (2728), 3.0 (2590)
+  - dist2: fill=7.76%, dtypes=['float64']
+    - stats: min=0.0, p50≈N/A, max=9103.0, mean=242.714, std=546.798
+    - top: 7.0 (2664), 0.0 (1231), 1.0 (579), 4.0 (319), 2.0 (273)
+  - event_time_ts_raw: fill=100.00%, dtypes=['int64']
+    - stats: min=86400.0, p50≈N/A, max=4556419.0, mean=2143828.000, std=1211275.451
+    - top: 766954 (3), 1888439 (3), 2143806 (3), 846676 (3), 1903384 (3)

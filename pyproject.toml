@@ -1,0 +1,42 @@
+[tool.poetry]
+name = "sapira-ai-exercise"
+version = "0.1.0"
+description = "Fraud data consolidation ETL and experimentation"
+authors = ["Javier <javier@example.com>"]
+readme = "README.md"
+packages = [
+  { include = "sapira_etl", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.14"
+pandas = "^2.2.2"
+fastparquet = "^2024.5.0"
+numpy = "^2.0.0"
+python-dateutil = "^2.9.0.post0"
+tqdm = "^4.66.4"
+pymongo = "^4.8.0"
+SQLAlchemy = "^2.0.30"
+psycopg2-binary = "^2.9.9"
+PyYAML = "^6.0.1"
+python-dotenv = "^1.0.1"
+
+# Optional performance/data engines
+polars = { version = "^1.4.1", optional = true }
+dask = { version = "^2024.7.1", optional = true, extras = ["dataframe"] }
+
+[tool.poetry.extras]
+fast = ["polars", "dask"]
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.4.2"
+ruff = "^0.5.4"
+
+[tool.poetry.scripts]
+etl-run = "sapira_etl.etl_unified:main"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+
