@@ -68,6 +68,22 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     df["dow"] = df["event_time"].dt.dayofweek
     df["is_night"] = ((df["hour"] < 6) | (df["hour"] >= 22)).astype(int)
 
+    # Time since last transaction per account (seconds)
+    df["time_since_last_sec"] = 0.0
+    if "account_id" in df.columns:
+        df.sort_values(["account_id", "event_time"], inplace=True)
+        last_time = None
+        last_by_acct: Dict[str, Optional[pd.Timestamp]] = {}
+        vals = np.zeros(len(df), dtype=float)
+        for i, (acct, t) in enumerate(zip(df["account_id"].values, df["event_time"].values)):
+            prev = last_by_acct.get(acct)
+            if pd.notna(t) and prev is not None and pd.notna(prev):
+                vals[i] = (pd.Timestamp(t).to_datetime64() - pd.Timestamp(prev).to_datetime64()).astype('timedelta64[s]').astype(float)
+            else:
+                vals[i] = np.nan
+            last_by_acct[acct] = pd.Timestamp(t) if pd.notna(t) else last_by_acct.get(acct)
+        df["time_since_last_sec"] = vals
+
     # Simple rolling counts per account_id using two-pointer (handles NaT)
     def rolling_count_by_hours(times: pd.Series, window_hours: int) -> np.ndarray:
         n = len(times)
@@ -99,6 +115,48 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         df["txn_count_1h"] = 0.0
         df["txn_count_24h"] = 0.0
 
+    # New merchant flag and seen-within-7d per account
+    df["is_new_merchant_for_account"] = 0
+    df["merchant_seen_7d"] = 0
+    if "account_id" in df.columns:
+        df.sort_values(["account_id", "event_time"], inplace=True)
+        seven_days = np.int64(7 * 24 * 3600)
+        flags_new = np.zeros(len(df), dtype=int)
+        flags_7d = np.zeros(len(df), dtype=int)
+        for acct, g in df.groupby("account_id", sort=False, dropna=False):
+            seen: Dict[str, int] = {}
+            last_ts: Dict[str, np.int64] = {}
+            for i, (idx, merch, t) in enumerate(zip(g.index, g["merchant_name"].fillna("UNK").values, g["event_time"].values)):
+                tsec = pd.Timestamp(t).value // 10**9 if pd.notna(t) else None
+                is_new = 0 if merch in seen else 1
+                within7d = 0
+                if merch in last_ts and tsec is not None:
+                    within7d = 1 if (tsec - last_ts[merch]) <= seven_days else 0
+                flags_new[list(g.index).index(idx)] = is_new  # will reassign below robustly
+                flags_7d[list(g.index).index(idx)] = within7d
+                seen[merch] = seen.get(merch, 0) + 1
+                if tsec is not None:
+                    last_ts[merch] = tsec
+            # Assign flags
+            df.loc[g.index, "is_new_merchant_for_account"] = flags_new[: len(g.index)]
+            df.loc[g.index, "merchant_seen_7d"] = flags_7d[: len(g.index)]
+
+    # Per-account aggregate amount stats (overall)
+    if "account_id" in df.columns:
+        agg = df.groupby("account_id")["abs_amount"].agg(["mean", "std", "median"])
+        agg["p90"] = df.groupby("account_id")["abs_amount"].quantile(0.9)
+        agg["p99"] = df.groupby("account_id")["abs_amount"].quantile(0.99)
+        df = df.merge(agg, left_on="account_id", right_index=True, how="left", suffixes=(None, None))
+        df.rename(columns={"mean": "acct_amt_mean", "std": "acct_amt_std", "median": "acct_amt_p50"}, inplace=True)
+        df["amount_zscore"] = (df["abs_amount"] - df["acct_amt_mean"]) / df["acct_amt_std"].replace({0: np.nan})
+    else:
+        df["acct_amt_mean"] = np.nan
+        df["acct_amt_std"] = np.nan
+        df["acct_amt_p50"] = np.nan
+        df["p90"] = np.nan
+        df["p99"] = np.nan
+        df["amount_zscore"] = np.nan
+
     numeric_features = [
         "amount",
         "abs_amount",
@@ -108,6 +166,15 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         "is_night",
         "txn_count_1h",
         "txn_count_24h",
+        "time_since_last_sec",
+        "is_new_merchant_for_account",
+        "merchant_seen_7d",
+        "acct_amt_mean",
+        "acct_amt_std",
+        "acct_amt_p50",
+        "p90",
+        "p99",
+        "amount_zscore",
     ]
     categorical_features = [
         "operation_type",
@@ -157,18 +224,22 @@ def compute_rule_scores(df: pd.DataFrame) -> pd.DataFrame:
     df["rule_high_amount"] = ((df["abs_amount"] >= p995) & df["abs_amount"].notna()).astype(int)
     df["rule_extreme_amount"] = ((df["abs_amount"] >= p999) & df["abs_amount"].notna()).astype(int)
     df["rule_new_merchant_high_amount"] = (
-        (df["merchant_name"].fillna("UNK").duplicated(keep=False) == False) & (df["abs_amount"] >= p995)
+        (df["is_new_merchant_for_account"] == 1) & (df["abs_amount"] >= p995)
     ).astype(int)
 
     # Velocity-based simple rules (approximate)
     df["rule_rapid_repeats"] = (df["txn_count_1h"] >= 5).astype(int)
 
+    # Z-score extreme
+    df["rule_amount_z3"] = ((df["amount_zscore"] >= 3.0) & df["amount_zscore"].notna()).astype(int)
+
     # Aggregate rule score
     df["rule_score"] = (
-        2 * df["rule_extreme_amount"]
+        2.0 * df["rule_extreme_amount"]
         + 1.5 * df["rule_high_amount"]
         + 1.0 * df["rule_new_merchant_high_amount"]
-        + 1.0 * df["rule_rapid_repeats"]
+        + 0.5 * df["rule_rapid_repeats"]
+        + 1.5 * df["rule_amount_z3"]
     )
     return df
 
@@ -186,10 +257,13 @@ def main():
     print(f"Fetched {len(df):,} rows. Engineering features...")
     df, num_cols, cat_cols = engineer_features(df)
 
-    print("Training Isolation Forest pipeline...")
+    print("Precomputing rule scores for contamination guard...")
+    df = compute_rule_scores(df)
+
+    print("Training Isolation Forest pipeline (excluding extreme rule hits)...")
     pipe = build_if_pipeline(num_cols, cat_cols, cfg.random_state)
-    # Fit on entire set as proxy for normal; for production, filter out extreme rule hits first
-    pipe.fit(df)
+    train_mask = ~((df["rule_extreme_amount"] == 1) | (df["rule_high_amount"] == 1))
+    pipe.fit(df.loc[train_mask, :])
 
     print("Scoring anomaly scores...")
     decision = pipe.decision_function(df)  # higher = more normal
@@ -200,8 +274,7 @@ def main():
     tau = float(np.quantile(anomaly_score, 1 - cfg.anomaly_rate_target))
     df["anomaly_alert"] = (df["anomaly_score"] >= tau).astype(int)
 
-    print("Computing rule scores...")
-    df = compute_rule_scores(df)
+    # rule scores already computed
 
     print("Combining decisions...")
     # Basic hybrid policy

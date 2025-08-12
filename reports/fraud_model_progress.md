@@ -65,3 +65,14 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 - Data profiling: `reports/*_profile.md`
 
 
+
+#### Labeled sanity-check (ULB, Isolation Forest)
+```
+rows: 200000
+fraud_rate: 0.008225
+average_precision: 0.00826
+precision_at:
+  0.1%: 0.0050
+  0.5%: 0.0100
+  1.0%: 0.0100
+```
