@@ -473,11 +473,17 @@ def profile_dguard_mongo(limit_docs: int = 50_000) -> Optional[SourceProfile]:
     except Exception:
         return None
 
-    uri = "mongodb://mongo:uGiyrTQJDXyusAZNqlzBOHRdaWxGrSGJ@junction.proxy.rlwy.net:15000/dguard"
+    from .settings import MONGO_URI
     client = None
     prof = SourceProfile(source_key="dguard_tx")
     try:
-        client = MongoClient(uri, uuidRepresentation='standard', tz_aware=True, serverSelectionTimeoutMS=5000)
+        client = MongoClient(
+            MONGO_URI,
+            uuidRepresentation='standard',
+            tz_aware=True,
+            serverSelectionTimeoutMS=8000,
+            authSource='admin',
+        )
         coll = client["dguard"]["bank_transactions"]
         fields = {
             'uuid': 1, 'user_id': 1, 'account_id': 1, 'operation_date': 1, 'amount': 1, 'currency': 1,

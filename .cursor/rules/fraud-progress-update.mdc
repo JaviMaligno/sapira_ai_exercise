@@ -1,0 +1,18 @@
+---
+alwaysApply: true
+---
+# Keep Fraud Model Progress Updated
+
+Whenever you make changes related to the fraud model (data profiling, feature engineering, rules, anomaly model, supervised models, thresholds, or evaluation):
+
+- Update the progress log at [sapira_ai_exercise/reports/fraud_model_progress.md](mdc:sapira_ai_exercise/reports/fraud_model_progress.md)
+  - Append the latest metrics block using outputs from:
+    - [alerts_phase1_summary.json](mdc:sapira_ai_exercise/reports/phase1/alerts_phase1_summary.json)
+    - [alerts_phase1.csv](mdc:sapira_ai_exercise/reports/phase1/alerts_phase1.csv)
+  - Add an entry to the Decision log (date, change, rationale)
+  - Adjust the Backlog/next steps if priorities change
+- If you add new artifacts (models, notebooks, reports), link them in the "Artifact pointers" section
+- Ensure any important caveats, data quirks, or anomalies are captured under "Notable findings"
+
+This rule ensures our fraud model progress doc remains an accurate, living record through the MVP and Phase 2.
+

@@ -20,6 +20,7 @@ SQLAlchemy = "^2.0.30"
 psycopg2-binary = "^2.9.9"
 PyYAML = "^6.0.1"
 python-dotenv = "^1.0.1"
+scikit-learn = "^1.5.2"
 
 # Optional performance/data engines
 polars = { version = "^1.4.1", optional = true }
