@@ -12,16 +12,16 @@ This document tracks the status, decisions, and key metrics of the fraud detecti
 ### Current status (latest)
 
 - Phase: 1 (Unsupervised + Rules)
-- Data source: Mongo `dguard.bank_transactions`
+- Data source: Mongo `dguard_transactions.bank_transactions` (updated)
 - Pipeline: feature engineering (amount, time-of-day, velocity), Isolation Forest scoring, rules aggregation.
 - Latest run: see metrics below.
 
 #### Latest run metrics
 ```
 total_rows: 355
-alerts: 3
-alert_rate: 0.00845 (~0.85%)
-anomaly_tau: 0.10469
+alerts: 4
+alert_rate: 0.01127 (~1.13%)
+anomaly_tau: 0.15001
 top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repeats: 47 }
 ```
 
@@ -33,8 +33,11 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 
 ### Decision log
 
+- 2025-08-13: Switched Mongo database to `dguard_transactions`; re-ran exploration and source profiling; updated ETL and docs.
 - 2025-08-12: Shipped Phase 1 IF + rules MVP with percentiled anomaly threshold and minimal ruleset.
 - 2025-08-12: Added robust rolling window counts (1h/24h) to handle NaT and unsorted timestamps.
+- 2025-08-12: Enhanced features (time-since-last, new-merchant flags, per-account amount stats/z-score) and added contamination guard for IF training; re-ran DGuard and ULB evaluation.
+- 2025-08-12: Added merchant frequency features (7/30d) and per-(account,day) alert cap; reduced rapid-repeat rule weight. Pipeline ready to re-run when Mongo fetch succeeds.
 
 ---
 
@@ -62,6 +65,7 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 - Phase 1 code: `src/fraud_mvp/phase1.py`
 - Latest alerts CSV: `reports/phase1/alerts_phase1.csv`
 - Latest summary JSON: `reports/phase1/alerts_phase1_summary.json`
+- ULB eval summary: `reports/phase1/ulb_eval/ulb_if_eval_summary.json`
 - Data profiling: `reports/*_profile.md`
 
 
@@ -70,9 +74,15 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 ```
 rows: 200000
 fraud_rate: 0.008225
-average_precision: 0.00826
+average_precision: 0.00825
 precision_at:
   0.1%: 0.0050
-  0.5%: 0.0100
-  1.0%: 0.0100
+  0.5%: 0.0110
+  1.0%: 0.0115
+  5.0%: 0.0083
 ```
+
+Targets for precision@5%:
+- MVP: >= 0.05
+- Product: >= 0.10
+- Ideal: >= 0.20

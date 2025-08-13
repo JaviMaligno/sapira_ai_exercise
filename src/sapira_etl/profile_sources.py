@@ -484,7 +484,10 @@ def profile_dguard_mongo(limit_docs: int = 50_000) -> Optional[SourceProfile]:
             serverSelectionTimeoutMS=8000,
             authSource='admin',
         )
-        coll = client["dguard"]["bank_transactions"]
+        # Select database from MONGO_URI (fallback to new default)
+        dbname = (MONGO_URI.rsplit('/', 1)[-1] or 'dguard_transactions').split('?')[0]
+        db = client[dbname]
+        coll = db["bank_transactions"]
         fields = {
             'uuid': 1, 'user_id': 1, 'account_id': 1, 'operation_date': 1, 'amount': 1, 'currency': 1,
             'description': 1, 'operation_type': 1, 'fraud_score': 1, 'is_suspicious': 1, 'fraud_status': 1,

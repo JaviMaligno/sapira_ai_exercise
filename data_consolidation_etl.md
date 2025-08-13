@@ -38,6 +38,7 @@ This document describes how we will normalize and consolidate multiple heterogen
 - DGuard MongoDB (Banking platform exploration)
   - Path: `/home/javier/repos/mongodb-exploration/`
   - Connection: see `README.md` for URI and auth
+  - Database name: `dguard_transactions` (updated)
   - Key collection for modeling: `bank_transactions`
     - Fields include: `operation_date`, `amount`, `balance`, `currency`, `description`, `operation_type`, `fraud_score`, `is_suspicious`, `fraud_status`, `merchant_clean_name`, `categories`, `transfer_details{account_number, sender_receiver}`, `account_id`, `user_id`, `uuid`
   - Label: none; provides fraud scoring signals (`fraud_score`, `is_suspicious`)
@@ -166,7 +167,7 @@ Below, “→” indicates target column.
 - Amount/Type/Merchant: `amt`, `category` → `transaction_type`, `merchant` → `merchant_name`, `merch_lat/merch_long`
 - Customer PII: `cc_num` (hash) → `card_token_hash`; compute `customer_id_hash`; map `city/state/zip/lat/long/city_pop/job/dob/gender`
 
-### DGuard MongoDB (`bank_transactions`)
+### DGuard MongoDB (`bank_transactions` in `dguard_transactions`)
 
 - Label: none; keep risk signals
 - IDs: `uuid` → `transaction_id`, `user_id` (hash) → `customer_id_hash`, `account_id` (hash) → `account_id_hash`
@@ -250,7 +251,7 @@ sparkov['dataset'] = 'sparkov_tx'
 # Example: Mongo (DGuard) bank_transactions
 from pymongo import MongoClient
 client = MongoClient('mongodb://...')  # see mongodb-exploration/README.md
-coll = client['dguard']['bank_transactions']
+coll = client['dguard_transactions']['bank_transactions']
 fields = {
   'uuid':1,'user_id':1,'account_id':1,'operation_date':1,'amount':1,'currency':1,
   'description':1,'operation_type':1,'fraud_score':1,'is_suspicious':1,'fraud_status':1,

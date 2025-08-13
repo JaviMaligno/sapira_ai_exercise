@@ -24,6 +24,7 @@ class EvalConfig:
     row_limit: int = 200_000
     random_state: int = 42
     out_dir: Path = Path("reports/phase1/ulb_eval")
+    n_estimators_grid: tuple[int, ...] = (200, 400, 600)
 
 
 def load_ulb(row_limit: int) -> pd.DataFrame:
@@ -105,7 +106,7 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     return df, numeric_features, categorical_features
 
 
-def build_if_pipeline(numeric_features: List[str], categorical_features: List[str], random_state: int) -> Pipeline:
+def build_if_pipeline(numeric_features: List[str], categorical_features: List[str], random_state: int, n_estimators: int = 400) -> Pipeline:
     numeric_transformer = Pipeline(steps=[("imputer", SimpleImputer(strategy="median"))])
     categorical_transformer = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="most_frequent")),
@@ -116,7 +117,7 @@ def build_if_pipeline(numeric_features: List[str], categorical_features: List[st
         ("cat", categorical_transformer, categorical_features),
     ])
     model = IsolationForest(
-        n_estimators=400, max_samples="auto", contamination="auto", random_state=random_state, n_jobs=-1
+        n_estimators=n_estimators, max_samples="auto", contamination="auto", random_state=random_state, n_jobs=-1
     )
     return Pipeline(steps=[("prep", preprocessor), ("model", model)])
 
@@ -140,47 +141,68 @@ def main():
 
     df, num_cols, cat_cols = engineer_features(df)
 
-    print("Training Isolation Forest on legitimate samples...")
+    print("Grid-searching Isolation Forest hyperparameters...")
     mask_legit = (y == 0)
-    pipe = build_if_pipeline(num_cols, cat_cols, cfg.random_state)
-    # Contamination guard: exclude top 0.5% by abs amount when fitting IF
-    subset = df.loc[mask_legit, :].copy()
-    p995 = float(np.percentile(subset["abs_amount"].dropna(), 99.5)) if subset["abs_amount"].notna().any() else np.inf
-    subset = subset[subset["abs_amount"] < p995]
-    pipe.fit(subset)
+    results = []
+    best = None
+    best_key = None
+    for n_est in cfg.n_estimators_grid:
+        pipe = build_if_pipeline(num_cols, cat_cols, cfg.random_state, n_estimators=n_est)
+        subset = df.loc[mask_legit, :].copy()
+        p995 = float(np.percentile(subset["abs_amount"].dropna(), 99.5)) if subset["abs_amount"].notna().any() else np.inf
+        subset = subset[subset["abs_amount"] < p995]
+        pipe.fit(subset)
 
-    print("Scoring anomaly scores...")
-    decision = pipe.decision_function(df)  # higher = more normal
-    anomaly_score = -decision
+        decision = pipe.decision_function(df)
+        anomaly_score = -decision
+        ap = average_precision_score(y, anomaly_score)
+        p_at_0_1 = precision_at_k(y, anomaly_score, 0.001)
+        p_at_0_5 = precision_at_k(y, anomaly_score, 0.005)
+        p_at_1_0 = precision_at_k(y, anomaly_score, 0.01)
+        p_at_5_0 = precision_at_k(y, anomaly_score, 0.05)
+        results.append({
+            "n_estimators": n_est,
+            "AP": float(ap),
+            "P@0.1%": float(p_at_0_1),
+            "P@0.5%": float(p_at_0_5),
+            "P@1.0%": float(p_at_1_0),
+            "P@5.0%": float(p_at_5_0),
+        })
+        key = (p_at_0_5, ap)
+        if best is None or key > best_key:
+            best = (n_est, anomaly_score)
+            best_key = key
 
-    print("Evaluating metrics...")
-    # Higher anomaly_score => more likely fraud, suitable for PR evaluation
-    ap = average_precision_score(y, anomaly_score)
-    prec, rec, _ = precision_recall_curve(y, anomaly_score)
+    # Save tuning table
+    pd.DataFrame(results).to_csv(cfg.out_dir / "ulb_if_tuning.csv", index=False)
+    n_best, anomaly_score = best
 
-    p_at_0_1 = precision_at_k(y, anomaly_score, 0.001)
-    p_at_0_5 = precision_at_k(y, anomaly_score, 0.005)
-    p_at_1_0 = precision_at_k(y, anomaly_score, 0.01)
-
-    scores_out = cfg.out_dir / "ulb_if_scores.csv"
+    # Save scores for best
+    scores_out = cfg.out_dir / f"ulb_if_scores_n{n_best}.csv"
     pd.DataFrame({
         "transaction_id": df["transaction_id"],
         "is_fraud": y,
         "anomaly_score": anomaly_score,
     }).to_csv(scores_out, index=False)
 
+    # Summaries across budgets
+    ap = average_precision_score(y, anomaly_score)
     summary = {
         "rows": int(len(df)),
         "fraud_rate": float(y.mean()),
+        "best_n_estimators": int(n_best),
         "average_precision": float(ap),
         "precision_at": {
-            "0.1%": p_at_0_1,
-            "0.5%": p_at_0_5,
-            "1.0%": p_at_1_0,
+            "0.1%": float(precision_at_k(y, anomaly_score, 0.001)),
+            "0.5%": float(precision_at_k(y, anomaly_score, 0.005)),
+            "1.0%": float(precision_at_k(y, anomaly_score, 0.01)),
+            "5.0%": float(precision_at_k(y, anomaly_score, 0.05)),
         },
+        "recommend_alert_rate": 0.005,
     }
     (cfg.out_dir / "ulb_if_eval_summary.json").write_text(json.dumps(summary, indent=2))
-    print(f"Wrote {scores_out} and summary json with AP={ap:.4f}, P@0.5%={p_at_0_5:.4f}")
+    (cfg.out_dir / "ulb_if_tuning_summary.json").write_text(json.dumps({"grid": results, "best": summary}, indent=2))
+    print(f"Best n_estimators={n_best} AP={ap:.4f} | P@0.5%={summary['precision_at']['0.5%']:.4f}")
 
 
 if __name__ == "__main__":

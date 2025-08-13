@@ -146,7 +146,7 @@ def load_dguard_bank_transactions(mongo_uri: str, limit: Optional[int] = None) -
         return None
     try:
         client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
-        dbname = (mongo_uri.rsplit('/', 1)[-1] or 'dguard').split('?')[0]
+        dbname = (mongo_uri.rsplit('/', 1)[-1] or 'dguard_transactions').split('?')[0]
         db = client[dbname]
         coll = db['bank_transactions']
         proj = {

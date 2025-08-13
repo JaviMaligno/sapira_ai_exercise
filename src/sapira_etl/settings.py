@@ -13,10 +13,19 @@ except Exception:  # pragma: no cover
 MODULE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = MODULE_DIR.parent.parent
 if load_dotenv is not None:
-    env_path = REPO_ROOT / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
-    else:
+    # Attempt multiple candidate locations for .env
+    candidates = [
+        REPO_ROOT / ".env",
+        REPO_ROOT.parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    loaded = False
+    for p in candidates:
+        if p.exists():
+            load_dotenv(p)
+            loaded = True
+            break
+    if not loaded:
         load_dotenv()
 
 # Centralized settings

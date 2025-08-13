@@ -14,6 +14,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+from collections import deque
 
 @dataclass
 class Phase1Config:
@@ -25,7 +26,8 @@ class Phase1Config:
 
 def fetch_dguard_transactions(limit_docs: int) -> pd.DataFrame:
     client = MongoClient(MONGO_URI, authSource="admin", serverSelectionTimeoutMS=10000)
-    coll = client["dguard"]["bank_transactions"]
+    dbname = (MONGO_URI.rsplit('/', 1)[-1] or 'dguard_transactions').split('?')[0]
+    coll = client[dbname]["bank_transactions"]
     fields = {
         "uuid": 1,
         "user_id": 1,
@@ -118,28 +120,49 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     # New merchant flag and seen-within-7d per account
     df["is_new_merchant_for_account"] = 0
     df["merchant_seen_7d"] = 0
+    df["merchant_txn_count_7d"] = 0.0
+    df["merchant_txn_count_30d"] = 0.0
     if "account_id" in df.columns:
         df.sort_values(["account_id", "event_time"], inplace=True)
         seven_days = np.int64(7 * 24 * 3600)
+        thirty_days = np.int64(30 * 24 * 3600)
         flags_new = np.zeros(len(df), dtype=int)
         flags_7d = np.zeros(len(df), dtype=int)
+        c7 = np.zeros(len(df), dtype=float)
+        c30 = np.zeros(len(df), dtype=float)
         for acct, g in df.groupby("account_id", sort=False, dropna=False):
             seen: Dict[str, int] = {}
             last_ts: Dict[str, np.int64] = {}
+            win7: Dict[str, deque] = {}
+            win30: Dict[str, deque] = {}
             for i, (idx, merch, t) in enumerate(zip(g.index, g["merchant_name"].fillna("UNK").values, g["event_time"].values)):
                 tsec = pd.Timestamp(t).value // 10**9 if pd.notna(t) else None
                 is_new = 0 if merch in seen else 1
                 within7d = 0
                 if merch in last_ts and tsec is not None:
                     within7d = 1 if (tsec - last_ts[merch]) <= seven_days else 0
-                flags_new[list(g.index).index(idx)] = is_new  # will reassign below robustly
-                flags_7d[list(g.index).index(idx)] = within7d
+                local_i = list(g.index).index(idx)
+                flags_new[local_i] = is_new
+                flags_7d[local_i] = within7d
+                if tsec is not None:
+                    dq7 = win7.setdefault(merch, deque())
+                    dq30 = win30.setdefault(merch, deque())
+                    while dq7 and (tsec - dq7[0]) > seven_days:
+                        dq7.popleft()
+                    while dq30 and (tsec - dq30[0]) > thirty_days:
+                        dq30.popleft()
+                    c7[local_i] = float(len(dq7))
+                    c30[local_i] = float(len(dq30))
+                    dq7.append(tsec)
+                    dq30.append(tsec)
                 seen[merch] = seen.get(merch, 0) + 1
                 if tsec is not None:
                     last_ts[merch] = tsec
             # Assign flags
             df.loc[g.index, "is_new_merchant_for_account"] = flags_new[: len(g.index)]
             df.loc[g.index, "merchant_seen_7d"] = flags_7d[: len(g.index)]
+            df.loc[g.index, "merchant_txn_count_7d"] = c7[: len(g.index)]
+            df.loc[g.index, "merchant_txn_count_30d"] = c30[: len(g.index)]
 
     # Per-account aggregate amount stats (overall)
     if "account_id" in df.columns:
@@ -175,6 +198,8 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         "p90",
         "p99",
         "amount_zscore",
+        "merchant_txn_count_7d",
+        "merchant_txn_count_30d",
     ]
     categorical_features = [
         "operation_type",
