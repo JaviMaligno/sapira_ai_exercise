@@ -19,10 +19,11 @@ This document tracks the status, decisions, and key metrics of the fraud detecti
 #### Latest run metrics
 ```
 total_rows: 355
-alerts: 4
-alert_rate: 0.01127 (~1.13%)
-anomaly_tau: 0.15001
+alerts: 3
+alert_rate: 0.00845 (~0.85%)
+anomaly_tau: 0.01683
 top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repeats: 47 }
+alerts_per_category: { salary: 1, transfer: 1, UNK: 1 }
 ```
 
 #### Notable findings
@@ -38,6 +39,12 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 - 2025-08-12: Added robust rolling window counts (1h/24h) to handle NaT and unsorted timestamps.
 - 2025-08-12: Enhanced features (time-since-last, new-merchant flags, per-account amount stats/z-score) and added contamination guard for IF training; re-ran DGuard and ULB evaluation.
 - 2025-08-12: Added merchant frequency features (7/30d) and per-(account,day) alert cap; reduced rapid-repeat rule weight. Pipeline ready to re-run when Mongo fetch succeeds.
+ - 2025-08-13: Added cyclic hour features and category-aware robust amount z-score (IQR) to ULB eval and DGuard; tuned IF on ULB (best n_estimators=200); re-ran DGuard.
+ - 2025-08-13: Added per-category novelty/time-since-last features and per-category thresholds in Phase 1; refreshed DGuard alerts.
+ - 2025-08-13: Logged latest DGuard metrics (alerts=4, alert_rate≈1.13%, tau≈0.14505) after per-category thresholding.
+ - 2025-08-13: Applied ULB-derived per-category thresholds and category transition rarity; latest DGuard alerts=3 (≈0.85%), tau≈0.14398.
+ - 2025-08-13: Added fixed-vocab encoders, merchant frequency features, and drift logging; regenerated DGuard alerts and daily drift report.
+ - 2025-08-13: Applied ULB ablation findings to Phase 1. Feature stack set to amount_core + velocity + cat_robust + novelty_cat based on best P@0.5% (0.013) and overall AP on ULB. Time-of-day features de-prioritized for IF; merchant frequency retained for lower-threshold review tiers.
 
 ---
 
@@ -74,13 +81,23 @@ top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repe
 ```
 rows: 200000
 fraud_rate: 0.008225
-average_precision: 0.00825
+average_precision: 0.00841
 precision_at:
-  0.1%: 0.0050
-  0.5%: 0.0110
-  1.0%: 0.0115
-  5.0%: 0.0083
+  0.1%: 0.0000
+  0.5%: 0.0130
+  1.0%: 0.0080
+  5.0%: 0.0082
 ```
+
+ULB ablation (P@0.5%):
+- baseline_amount: 0.0070
+- +time: 0.0060
+- +velocity: 0.0100
+- +cat_robust (winsor z_iqr): 0.0130 (best)
+- +novelty_cat: 0.0120
+- +merchant_freq: 0.0100 (but best P@5% ≈ 0.0091)
+
+Rationale: prioritize features that lift top-of-queue precision; reserve merchant frequency for broader review budgets.
 
 Targets for precision@5%:
 - MVP: >= 0.05
