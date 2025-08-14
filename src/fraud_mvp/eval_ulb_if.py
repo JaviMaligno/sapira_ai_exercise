@@ -26,6 +26,7 @@ class EvalConfig:
     out_dir: Path = Path("reports/phase1/ulb_eval")
     n_estimators_grid: tuple[int, ...] = (200, 400, 600)
     max_features_grid: tuple[float, ...] = (0.5, 0.7, 1.0)
+    max_samples_grid: tuple[object, ...] = ("auto", 256, 512)
 
 
 def load_ulb(row_limit: int) -> pd.DataFrame:
@@ -109,6 +110,13 @@ def engineer_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     cat_iqr = df.groupby("operation_type")["amount_winsor_cat"].transform(lambda s: (s.quantile(0.75) - s.quantile(0.25)))
     df["amount_z_iqr_cat"] = (df["amount_winsor_cat"] - cat_median) / cat_iqr.replace({0: np.nan})
 
+    # Merchant text sanitization to avoid label leakage tokens like 'fraud_'
+    if "merchant_name" in df.columns:
+        s = df["merchant_name"].astype(str).str.lower()
+        s = s.str.replace(r"^fraud_", "", regex=True)
+        s = s.str.replace(r"[^a-z0-9\s]+", " ", regex=True).str.replace(r"\s+", " ", regex=True).str.strip()
+        df["merchant_name"] = s
+
     numeric_features = [
         "amount", "abs_amount", "log1p_abs_amount", "hour", "hour_sin", "hour_cos", "dow", "is_night",
         "txn_count_1h", "txn_count_24h", "time_since_last_sec", "amount_z_iqr_cat",
@@ -164,11 +172,14 @@ def main():
     best_key = None
     for n_est in cfg.n_estimators_grid:
         for mf in cfg.max_features_grid:
-            pipe = build_if_pipeline(num_cols, cat_cols, cfg.random_state, n_estimators=n_est, max_features=mf)
-            subset = df.loc[mask_legit, :].copy()
-            p995 = float(np.percentile(subset["abs_amount"].dropna(), 99.5)) if subset["abs_amount"].notna().any() else np.inf
-            subset = subset[subset["abs_amount"] < p995]
-            pipe.fit(subset)
+            for ms in cfg.max_samples_grid:
+                pipe = build_if_pipeline(num_cols, cat_cols, cfg.random_state, n_estimators=n_est, max_features=mf)
+                subset = df.loc[mask_legit, :].copy()
+                p995 = float(np.percentile(subset["abs_amount"].dropna(), 99.5)) if subset["abs_amount"].notna().any() else np.inf
+                subset = subset[subset["abs_amount"] < p995]
+                # Override max_samples if not auto
+                pipe.named_steps["model"].set_params(max_samples=ms)
+                pipe.fit(subset)
 
             decision = pipe.decision_function(df)
             anomaly_score = -decision
@@ -180,6 +191,7 @@ def main():
             results.append({
                 "n_estimators": n_est,
                 "max_features": mf,
+                    "max_samples": ms,
                 "AP": float(ap),
                 "P@0.1%": float(p_at_0_1),
                 "P@0.5%": float(p_at_0_5),
@@ -188,12 +200,12 @@ def main():
             })
             key = (p_at_0_5, ap)
             if best is None or key > best_key:
-                best = (n_est, mf, anomaly_score)
-                best_key = key
+                    best = (n_est, mf, ms, anomaly_score)
+                    best_key = key
 
     # Save tuning table
     pd.DataFrame(results).to_csv(cfg.out_dir / "ulb_if_tuning.csv", index=False)
-    n_best, mf_best, anomaly_score = best
+    n_best, mf_best, ms_best, anomaly_score = best
 
     # Save scores for best
     scores_out = cfg.out_dir / f"ulb_if_scores_n{n_best}.csv"
@@ -226,11 +238,11 @@ def main():
     if "operation_type" in df.columns:
         for cat, g in df.groupby("operation_type"):
             if len(g) >= 50:
-                thr = float(np.quantile(g["anomaly_score"], 1 - summary["recommend_alert_rate"]))
+                thr = float(np.quantile(anomaly_score[g.index], 1 - summary["recommend_alert_rate"]))
                 thresholds[str(cat)] = thr
     (cfg.out_dir / "ulb_if_per_category_thresholds.json").write_text(json.dumps(thresholds, indent=2))
 
-    print(f"Best n_estimators={n_best} max_features={mf_best} AP={ap:.4f} | P@0.5%={summary['precision_at']['0.5%']:.4f}")
+    print(f"Best n_estimators={n_best} max_features={mf_best} max_samples={ms_best} AP={ap:.4f} | P@0.5%={summary['precision_at']['0.5%']:.4f}")
 
 
 if __name__ == "__main__":
