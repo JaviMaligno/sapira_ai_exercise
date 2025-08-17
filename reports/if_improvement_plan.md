@@ -39,6 +39,14 @@ Next work items
 - Conduct per-category threshold tuning on ULB slices and port thresholds to Phase 1. (ULB per-category thresholds generated and consumed by Phase 1)
 - Add drift monitors (new-merchant share, category-wise amount quantiles, missingness) and logging hooks.
 
+### Phase 2 GBDT – next steps
+- Segment models/thresholds by `operation_type`; train per-category GBDTs for top-volume categories and a fallback model.
+- Add Isolation Forest outputs (anomaly_score, rule_score proxy) as features with time-aware fitting (fit IF on train-legit only; transform train/test).
+- Add stronger per-card history features (point-in-time): expanding/rolling per-card amount stats (mean/std/median, p90/p99), z-scores; counts/sums in 1h/6h/24h; unique merchants 7/30d; days since last seen merchant/category.
+- Replace one-hot for high-cardinality `merchant_name` with frequency/target encoding (fit on train folds only; use frequency ranks at serve-time).
+- Time-aware hyperparameter tuning for GBDT: depth/leaves, learning_rate vs iterations with early stopping, regularization.
+- Per-step ablation: baseline → +IF score → +rolling/history → +target/frequency encoding → +segmented models; log AP and P@k after each step.
+
 - Thresholding & alerting
   - Separate anomaly thresholds per `operation_type` reflecting different base rates.
   - Daily caps per (account, merchant) to avoid alert floods.

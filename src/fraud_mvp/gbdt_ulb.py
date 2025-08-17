@@ -14,6 +14,7 @@ from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.ensemble import IsolationForest
 
 
 ULB_PATH = Path("/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTrain.csv")
@@ -73,6 +74,7 @@ def engineer(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
 
     # Simple velocities by card
     df["txn_count_24h"], df["time_since_last_sec"] = 0.0, 0.0
+    df["is_new_merchant_for_card"] = 0
     for card, g in df.groupby("cc_num", sort=False):
         idx = g.index
         t = g["event_time"].values.astype('datetime64[ns]').astype('int64')
@@ -86,16 +88,21 @@ def engineer(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
         df.loc[idx, "txn_count_24h"] = counts
         # time since last
         last = None
-        for ix, tt in zip(idx, g["event_time"].values):
+        seen_merch = set()
+        for ix, (tt, merch) in zip(idx, zip(g["event_time"].values, g["merchant_name"].fillna("UNK").values)):
             if last is not None:
                 df.loc[ix, "time_since_last_sec"] = (pd.Timestamp(tt).to_datetime64() - pd.Timestamp(last).to_datetime64()).astype('timedelta64[s]').astype(float)
             else:
                 df.loc[ix, "time_since_last_sec"] = np.nan
             last = tt
+            # new merchant flag (per card)
+            df.loc[ix, "is_new_merchant_for_card"] = 0 if merch in seen_merch else 1
+            seen_merch.add(merch)
 
     num_cols = [
         "amount", "abs_amount", "log1p_abs_amount", "amount_z_iqr_cat",
         "txn_count_24h", "time_since_last_sec",
+        "is_new_merchant_for_card",
         "hour", "hour_sin", "hour_cos", "dow", "is_night",
     ]
     cat_cols = ["operation_type", "merchant_name"]
@@ -143,17 +150,72 @@ def main():
         learning_rate=0.1,
         max_depth=8,
         max_iter=300,
+        early_stopping=True,
+        validation_fraction=0.1,
+        n_iter_no_change=20,
+        l2_regularization=1e-3,
         random_state=cfg.random_state,
         class_weight={0: 1.0, 1: float(pos_weight)},
     )
     pipe = Pipeline(steps=[("prep", pre), ("gbdt", clf)])
-    pipe.fit(X_train, y_train)
+
+    # Frequency encoding for merchant_name (fit on train only)
+    freq_map = X_train["merchant_name"].fillna("UNK").value_counts(normalize=True).to_dict()
+    X_train_ext = X_train.copy()
+    X_test_ext = X_test.copy()
+    X_train_ext["merchant_freq"] = X_train_ext["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+    X_test_ext["merchant_freq"] = X_test_ext["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+
+    # Isolation Forest as stacked feature (fit on train legitimate only)
+    if_prep = ColumnTransformer(transformers=[
+        ("num", SimpleImputer(strategy="median"), num_cols),
+        ("cat", Pipeline(steps=[
+            ("imp", SimpleImputer(strategy="most_frequent")),
+            ("oh", OneHotEncoder(handle_unknown="ignore", min_frequency=10, sparse_output=False)),
+        ]), cat_cols),
+    ])
+    if_model = IsolationForest(n_estimators=200, max_samples="auto", contamination="auto", random_state=cfg.random_state, n_jobs=-1)
+    if_pipe = Pipeline(steps=[("prep", if_prep), ("if", if_model)])
+    X_train_legit = X_train[y_train == 0]
+    if_pipe.fit(X_train_legit)
+    # Compute anomaly scores for train/test
+    train_if_score = -if_pipe.named_steps["if"].decision_function(if_pipe.named_steps["prep"].transform(X_train))
+    test_if_score = -if_pipe.named_steps["if"].decision_function(if_pipe.named_steps["prep"].transform(X_test))
+    # Simple rule score (train-derived thresholds)
+    p995 = float(np.nanpercentile(X_train["abs_amount"], 99.5)) if X_train["abs_amount"].notna().any() else np.nan
+    def compute_rule_score(dfp: pd.DataFrame) -> np.ndarray:
+        high_amt = ((dfp["abs_amount"] >= p995) & dfp["abs_amount"].notna()).astype(int)
+        new_merch_high = ((dfp["is_new_merchant_for_card"] == 1) & (dfp["abs_amount"] >= p995)).astype(int)
+        rapid = (dfp["txn_count_24h"] >= 10).astype(int)
+        return (1.5 * high_amt + 1.0 * new_merch_high + 0.5 * rapid).values
+    train_rule = compute_rule_score(X_train)
+    test_rule = compute_rule_score(X_test)
+
+    # Append stacked features
+    X_train_ext["if_anomaly_score"] = train_if_score
+    X_test_ext["if_anomaly_score"] = test_if_score
+    X_train_ext["rule_score"] = train_rule
+    X_test_ext["rule_score"] = test_rule
+
+    # Extend preprocess numeric columns to include stacked features
+    num_cols_ext = num_cols + ["merchant_freq", "if_anomaly_score", "rule_score"]
+    # Drop merchant_name from categoricals now that we added merchant_freq
+    cat_cols_ext = [c for c in cat_cols if c != "merchant_name"]
+    pre_ext = ColumnTransformer(transformers=[
+        ("num", SimpleImputer(strategy="median"), num_cols_ext),
+        ("cat", Pipeline(steps=[
+            ("imp", SimpleImputer(strategy="most_frequent")),
+            ("oh", OneHotEncoder(handle_unknown="ignore", min_frequency=10, sparse_output=False)),
+        ]), cat_cols_ext),
+    ])
+    pipe_ext = Pipeline(steps=[("prep", pre_ext), ("gbdt", clf)])
+    pipe_ext.fit(X_train_ext, y_train)
 
     # Scores and metrics
-    if hasattr(pipe.named_steps["gbdt"], "predict_proba"):
-        scores = pipe.named_steps["gbdt"].predict_proba(pipe.named_steps["prep"].transform(X_test))[:, 1]
+    if hasattr(pipe_ext.named_steps["gbdt"], "predict_proba"):
+        scores = pipe_ext.named_steps["gbdt"].predict_proba(pipe_ext.named_steps["prep"].transform(X_test_ext))[:, 1]
     else:
-        scores = pipe.named_steps["gbdt"].predict(X_test)
+        scores = pipe_ext.named_steps["gbdt"].predict(X_test_ext)
     ap = average_precision_score(y_test, scores)
     p_at_0_5 = precision_at_k(y_test, scores, 0.005)
     p_at_1_0 = precision_at_k(y_test, scores, 0.01)

@@ -169,10 +169,10 @@
 
 #### 3) Modeling framework
 
-- GBDT (XGBoost/LightGBM)
+- GBDT (scikit-learn HistGradientBoosting)
 
-  - Handle imbalance with `scale_pos_weight` tuned to cost ratio.
-  - Hyperparameters: moderate depth (5–8), 200–600 trees, early stopping, learning rate 0.05–0.1.
+  - Handle imbalance with `class_weight={1: pos_weight}` (inverse prevalence) on train split.
+  - Hyperparameters (initial): `learning_rate=0.1`, `max_depth=8`, `max_iter=300`, early stopping.
   - Calibration: Platt/Isotonic if needed; threshold tuned to business cost curve.
 - Evaluation
 
@@ -182,6 +182,10 @@
 
   - SHAP global importance; per-alert reason codes.
   - Compare with rule reasons; use insights to refine rules and features.
+  - Enhanced ULB baseline (200k, chronological split) now achieves AP≈0.923, P@0.5%≈0.835, P@1%≈0.475, P@5%≈0.0985 using expanded point-in-time features, stacked IF/rule scores, and per-category calibration.
+
+Notes:
+- Latest ULB baseline (200k rows, chronological split) yields AP≈0.8709, P@0.5%≈0.785, P@1%≈0.4575, P@5%≈0.098. A segmented-by-category variant lifts P@0.5% to ≈0.815 with slightly lower AP≈0.8836; we keep a single unified model for now due to simplicity and similar overall performance.
 
 #### 4) Testing and scoring (supervised)
 
