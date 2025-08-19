@@ -14,9 +14,13 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import average_precision_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
+from sklearn.isotonic import IsotonicRegression
+import joblib
+import shap
 
 
 ULB_PATH = Path("/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTrain.csv")
+ULB_TEST_PATH = Path("/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTest.csv")
 
 
 @dataclass
@@ -27,6 +31,7 @@ class Config:
     # CV folds as chronological fractions (train_end, val_end)
     folds: List[Tuple[float, float]] = ((0.6, 0.8), (0.8, 1.0))
     per_category_alert_fracs: List[float] = (0.005, 0.01, 0.05)  # 0.5%, 1%, 5%
+    export_alert_fracs: List[float] = (0.005, 0.01)
 
 
 def load_ulb(limit: int) -> pd.DataFrame:
@@ -43,7 +48,65 @@ def load_ulb(limit: int) -> pd.DataFrame:
         inplace=True,
     )
     df["event_time"] = pd.to_datetime(df["event_time_ts"], unit="s", utc=True)
+    df["dataset"] = "ULB"
     return df
+
+
+def load_ulb_test() -> pd.DataFrame:
+    usecols = ["trans_num", "unix_time", "category", "amt", "merchant", "is_fraud", "cc_num"]
+    df = pd.read_csv(ULB_TEST_PATH, usecols=usecols)
+    df.rename(
+        columns={
+            "trans_num": "transaction_id",
+            "unix_time": "event_time_ts",
+            "category": "operation_type",
+            "amt": "amount",
+            "merchant": "merchant_name",
+        },
+        inplace=True,
+    )
+    df["event_time"] = pd.to_datetime(df["event_time_ts"], unit="s", utc=True)
+    df["dataset"] = "ULB"
+    return df
+
+
+def load_ieee(limit: int) -> pd.DataFrame:
+    tx_path = Path("/home/javier/repos/datasets/ieee-fraud-detection/train_transaction.csv")
+    # Minimal columns used
+    usecols = [
+        "TransactionID",
+        "TransactionDT",
+        "TransactionAmt",
+        "ProductCD",
+        "card1",
+        "card4",
+        "P_emaildomain",
+        "isFraud",
+    ]
+    df = pd.read_csv(tx_path, usecols=usecols, nrows=limit)
+    # Harmonize
+    df.rename(
+        columns={
+            "TransactionID": "transaction_id",
+            "TransactionDT": "event_time_ts",
+            "TransactionAmt": "amount",
+            "ProductCD": "operation_type",
+            "isFraud": "is_fraud",
+        },
+        inplace=True,
+    )
+    # Build event_time from relative seconds since start
+    base = pd.Timestamp("2017-12-01", tz="UTC")
+    df["event_time"] = base + pd.to_timedelta(df["event_time_ts"], unit="s")
+    # Merchant proxy
+    merch = df["P_emaildomain"].fillna(df["card4"].astype(str)).fillna("UNK").astype(str)
+    df["merchant_name"] = merch
+    # Card proxy
+    df["cc_num"] = df["card1"].fillna(-1).astype(int)
+    df["dataset"] = "IEEE"
+    return df[[
+        "transaction_id", "event_time_ts", "event_time", "operation_type", "amount", "merchant_name", "is_fraud", "cc_num", "dataset"
+    ]]
 
 
 def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
@@ -237,7 +300,7 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         "is_night",
         "merchant_freq_global",
     ]
-    cat_cols = ["operation_type"]  # merchant_name will be encoded via frequency; avoid huge one-hot
+    cat_cols = ["operation_type", "dataset"]  # merchant_name via frequency; add dataset indicator
     return df, num_cols, cat_cols
 
 
@@ -377,6 +440,86 @@ def time_aware_cv(df: pd.DataFrame, num_cols: List[str], cat_cols: List[str], cf
     return {"folds": results}
 
 
+def time_aware_hp_tuning(df: pd.DataFrame, num_cols: List[str], cat_cols: List[str], cfg: Config) -> Dict:
+    df_sorted = df.sort_values("event_time")
+    results = []
+    # Small grid
+    grid = [
+        {"max_depth": d, "min_samples_leaf": msl, "learning_rate": lr, "l2_regularization": l2}
+        for d in (6, 8)
+        for msl in (20, 50)
+        for lr in (0.1,)
+        for l2 in (1e-3, 3e-3)
+    ]
+
+    for params in grid:
+        fold_scores = []
+        for train_frac, val_frac in cfg.folds:
+            train_end = int(len(df_sorted) * train_frac)
+            val_end = int(len(df_sorted) * val_frac)
+            train_df = df_sorted.iloc[:train_end].copy()
+            val_df = df_sorted.iloc[train_end:val_end].copy()
+
+            # Merchant frequency map on train only
+            freq_map = train_df["merchant_name"].fillna("UNK").value_counts(normalize=True).to_dict()
+            train_df["merchant_freq_global"] = train_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+            val_df["merchant_freq_global"] = val_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+
+            # Stacked features (IF + rule)
+            train_if, val_if, train_rule, val_rule = fit_if_and_rule_scores(
+                train_df, val_df, num_cols, cat_cols_for_if=["operation_type", "merchant_name"], rs=cfg.random_state
+            )
+            train_df_ext = train_df.copy()
+            val_df_ext = val_df.copy()
+            train_df_ext["if_anomaly_score"], val_df_ext["if_anomaly_score"] = train_if, val_if
+            train_df_ext["rule_score"], val_df_ext["rule_score"] = train_rule, val_rule
+
+            num_cols_ext = num_cols + ["if_anomaly_score", "rule_score"]
+            pos_weight = (train_df_ext["is_fraud"].astype(int).values == 0).sum() / max(1, (train_df_ext["is_fraud"].astype(int).values == 1).sum())
+
+            # Build model with params
+            pre = ColumnTransformer(
+                transformers=[
+                    ("num", SimpleImputer(strategy="median"), num_cols_ext),
+                    (
+                        "cat",
+                        Pipeline(
+                            steps=[
+                                ("imp", SimpleImputer(strategy="most_frequent")),
+                                ("oh", OneHotEncoder(handle_unknown="ignore", min_frequency=10, sparse_output=False)),
+                            ]
+                        ),
+                        cat_cols,
+                    ),
+                ]
+            )
+            clf = HistGradientBoostingClassifier(
+                learning_rate=params["learning_rate"],
+                max_depth=params["max_depth"],
+                max_iter=300,
+                early_stopping=True,
+                validation_fraction=0.1,
+                n_iter_no_change=20,
+                l2_regularization=params["l2_regularization"],
+                max_bins=255,
+                random_state=cfg.random_state,
+                class_weight={0: 1.0, 1: float(pos_weight)},
+            )
+            pipe = Pipeline(steps=[("prep", pre), ("gbdt", clf)])
+            pipe.fit(train_df_ext, train_df_ext["is_fraud"].astype(int).values)
+            scores = compute_scores(pipe, val_df_ext)
+            y_val = val_df_ext["is_fraud"].astype(int).values
+            ap = average_precision_score(y_val, scores)
+            fold_scores.append(ap)
+
+        results.append({"params": params, "AP_mean": float(np.mean(fold_scores)), "AP_folds": [float(x) for x in fold_scores]})
+
+    # Sort by AP_mean desc
+    results_sorted = sorted(results, key=lambda x: x["AP_mean"], reverse=True)
+    best = results_sorted[0] if results_sorted else {}
+    return {"grid_results": results_sorted, "best": best}
+
+
 def per_category_thresholds(scores: np.ndarray, y_true: np.ndarray, categories: np.ndarray, alert_frac: float) -> Dict[str, float]:
     thresholds: Dict[str, float] = {}
     for cat in np.unique(categories):
@@ -423,8 +566,22 @@ def train_eval_and_calibrate(df: pd.DataFrame, num_cols: List[str], cat_cols: Li
     num_cols_ext = num_cols + ["if_anomaly_score", "rule_score"]
     pos_weight = (train_df_ext["is_fraud"].astype(int).values == 0).sum() / max(1, (train_df_ext["is_fraud"].astype(int).values == 1).sum())
     pipe = build_pipeline(num_cols_ext, cat_cols, pos_weight, cfg.random_state)
-    pipe.fit(train_df_ext, train_df_ext["is_fraud"].astype(int).values)
-    scores = compute_scores(pipe, test_df_ext)
+    # Hold out last 10% of train for isotonic calibration
+    calib_split = int(len(train_df_ext) * 0.9)
+    tr_cal = train_df_ext.iloc[:calib_split]
+    te_cal = train_df_ext.iloc[calib_split:]
+    y_tr_cal = tr_cal["is_fraud"].astype(int).values
+    y_te_cal = te_cal["is_fraud"].astype(int).values
+    pipe.fit(tr_cal, y_tr_cal)
+    # Raw scores
+    pre: ColumnTransformer = pipe.named_steps["prep"]
+    scores_cal_raw = compute_scores(pipe, te_cal)
+    # Fit isotonic on calibration slice
+    iso = IsotonicRegression(out_of_bounds="clip")
+    iso.fit(scores_cal_raw, y_te_cal)
+    # Test scores calibrated
+    scores_raw = compute_scores(pipe, test_df_ext)
+    scores = iso.transform(scores_raw)
     y_test = test_df_ext["is_fraud"].astype(int).values
 
     # Overall metrics
@@ -452,7 +609,246 @@ def train_eval_and_calibrate(df: pd.DataFrame, num_cols: List[str], cat_cols: Li
         thresholds_by_frac[str(frac)] = thrs
         per_frac_eval[str(frac)] = evaluate_with_thresholds(scores, y_test, cats, thrs)
 
+    # SHAP explanations (in-period test)
+    X_test_mat = pre.transform(test_df_ext)
+    try:
+        explainer = shap.Explainer(pipe.named_steps["gbdt"])
+        # Global: sample subset for efficiency
+        rng = np.random.default_rng(cfg.random_state)
+        sample_size = min(2000, X_test_mat.shape[0])
+        sample_idx = rng.choice(X_test_mat.shape[0], size=sample_size, replace=False)
+        shap_vals_sample = explainer(X_test_mat[sample_idx])
+        # Feature names
+        raw_names = pre.get_feature_names_out()
+        def clean_name(n: str) -> str:
+            n = n.replace("num__", "")
+            n = n.replace("cat__oh__", "")
+            n = n.replace("cat__", "")
+            return n
+        feat_names = [clean_name(n) for n in raw_names]
+        mean_abs = np.mean(np.abs(shap_vals_sample.values), axis=0)
+        order = np.argsort(mean_abs)[::-1]
+        global_importance = [
+            {"feature": feat_names[i], "mean_abs_shap": float(mean_abs[i])}
+            for i in order
+        ]
+        # Per-alert: top 100 highest scores
+        top_n = min(100, X_test_mat.shape[0])
+        top_idx = np.argsort(scores)[-top_n:][::-1]
+        shap_vals_top = explainer(X_test_mat[top_idx])
+        top_alerts = []
+        for rank, idx in enumerate(top_idx):
+            vals = shap_vals_top.values[rank]
+            contrib_order = np.argsort(np.abs(vals))[::-1][:5]
+            contribs = [
+                {"feature": feat_names[j], "shap_value": float(vals[j])}
+                for j in contrib_order
+            ]
+            row = test_df_ext.iloc[idx]
+            top_alerts.append({
+                "rank": int(rank + 1),
+                "score": float(scores[idx]),
+                "event_time": str(row.get("event_time")),
+                "operation_type": str(row.get("operation_type")),
+                "amount": float(row.get("amount", np.nan)),
+                "merchant_name": str(row.get("merchant_name")),
+                "reasons": contribs,
+            })
+        shap_artifacts = {
+            "global_importance": global_importance,
+            "top_alerts": top_alerts,
+        }
+    except Exception as e:
+        shap_artifacts = {"error": str(e)}
+
+    # Persist model artifacts for serving
+    # 1) Fitted pipeline and isotonic calibrator
+    joblib.dump(pipe, cfg.out_dir / "pipeline.pkl")
+    joblib.dump(iso, cfg.out_dir / "isotonic.pkl")
+    # 2) Isolation Forest pipeline for stacked feature at serve time (fit on train legitimate)
+    if_prep = ColumnTransformer(
+        transformers=[
+            ("num", SimpleImputer(strategy="median"), num_cols),
+            (
+                "cat",
+                Pipeline(
+                    steps=[
+                        ("imp", SimpleImputer(strategy="most_frequent")),
+                        ("oh", OneHotEncoder(handle_unknown="ignore", min_frequency=10, sparse_output=False)),
+                    ]
+                ),
+                ["operation_type", "merchant_name"],
+            ),
+        ]
+    )
+    if_model = IsolationForest(n_estimators=200, max_samples="auto", contamination="auto", random_state=cfg.random_state, n_jobs=-1)
+    if_pipe = Pipeline(steps=[("prep", if_prep), ("if", if_model)])
+    X_train_legit = train_df[train_df["is_fraud"].astype(int).values == 0]
+    if_pipe.fit(X_train_legit)
+    joblib.dump(if_pipe, cfg.out_dir / "if_pipe.pkl")
+    # 3) Merchant frequency map and rule parameters
+    (cfg.out_dir / "merchant_freq_map.json").write_text(json.dumps(freq_map, indent=2))
+    p995 = float(np.nanpercentile(train_df["abs_amount"], 99.5)) if train_df["abs_amount"].notna().any() else float("nan")
+    (cfg.out_dir / "rule_params.json").write_text(json.dumps({"p995": p995}, indent=2))
+
+    return {
+        "overall": overall,
+        "thresholds": thresholds_by_frac,
+        "threshold_eval": per_frac_eval,
+        "shap": shap_artifacts,
+    }
+
+
+def evaluate_on_ulb_test(df_train_full: pd.DataFrame, num_cols: List[str], cat_cols: List[str], cfg: Config) -> Dict:
+    # Train on 80% of fraudTrain, evaluate on fraudTest (later period)
+    df_train_full = df_train_full.sort_values("event_time")
+    split_idx = int(len(df_train_full) * 0.8)
+    train_df = df_train_full.iloc[:split_idx].copy()
+    ulb_test_raw = load_ulb_test()
+    ulb_test_df, _, _ = engineer_enhanced(ulb_test_raw)
+
+    # Merchant global frequency (train only)
+    freq_map = train_df["merchant_name"].fillna("UNK").value_counts(normalize=True).to_dict()
+    train_df["merchant_freq_global"] = train_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+    ulb_test_df["merchant_freq_global"] = ulb_test_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+
+    # Stacked features (IF + rule) fit on train only
+    train_if, test_if, train_rule, test_rule = fit_if_and_rule_scores(
+        train_df, ulb_test_df, num_cols, cat_cols_for_if=["operation_type", "merchant_name"], rs=cfg.random_state
+    )
+    train_df_ext = train_df.copy()
+    test_df_ext = ulb_test_df.copy()
+    train_df_ext["if_anomaly_score"], test_df_ext["if_anomaly_score"] = train_if, test_if
+    train_df_ext["rule_score"], test_df_ext["rule_score"] = train_rule, test_rule
+
+    num_cols_ext = num_cols + ["if_anomaly_score", "rule_score"]
+    pos_weight = (train_df_ext["is_fraud"].astype(int).values == 0).sum() / max(1, (train_df_ext["is_fraud"].astype(int).values == 1).sum())
+    pipe = build_pipeline(num_cols_ext, cat_cols, pos_weight, cfg.random_state)
+    pipe.fit(train_df_ext, train_df_ext["is_fraud"].astype(int).values)
+    scores = compute_scores(pipe, test_df_ext)
+    y_test = test_df_ext["is_fraud"].astype(int).values
+
+    ap = average_precision_score(y_test, scores)
+    overall = {
+        "train_rows": int(len(train_df_ext)),
+        "test_rows": int(len(test_df_ext)),
+        "fraud_rate_train": float((train_df_ext["is_fraud"].astype(int).values == 1).mean()),
+        "fraud_rate_test": float((y_test == 1).mean()),
+        "average_precision": float(ap),
+        "precision_at": {
+            "0.5%": precision_at_k(y_test, scores, 0.005),
+            "1.0%": precision_at_k(y_test, scores, 0.01),
+            "5.0%": precision_at_k(y_test, scores, 0.05),
+        },
+    }
+
+    thresholds_by_frac: Dict[str, Dict[str, float]] = {}
+    per_frac_eval: Dict[str, Dict[str, float]] = {}
+    cats = test_df_ext["operation_type"].astype(str).values
+    for frac in cfg.per_category_alert_fracs:
+        thrs = per_category_thresholds(scores, y_test, cats, frac)
+        thresholds_by_frac[str(frac)] = thrs
+        per_frac_eval[str(frac)] = evaluate_with_thresholds(scores, y_test, cats, thrs)
+
     return {"overall": overall, "thresholds": thresholds_by_frac, "threshold_eval": per_frac_eval}
+
+
+def train_eval_on_combined_ulb_ieee(limit_ulb: int, limit_ieee: int, cfg: Config) -> Dict:
+    # Load both datasets
+    ulb_raw = load_ulb(limit_ulb)
+    ieee_raw = load_ieee(limit_ieee)
+    df_all = pd.concat([ulb_raw, ieee_raw], ignore_index=True)
+    df_all, num_cols, cat_cols = engineer_enhanced(df_all)
+
+    # Chronological split across combined
+    df_sorted = df_all.sort_values("event_time")
+    split_idx = int(len(df_sorted) * 0.8)
+    train_df = df_sorted.iloc[:split_idx].copy()
+    test_df = df_sorted.iloc[split_idx:].copy()
+
+    # Train-only merchant frequency
+    freq_map = train_df["merchant_name"].fillna("UNK").value_counts(normalize=True).to_dict()
+    train_df["merchant_freq_global"] = train_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+    test_df["merchant_freq_global"] = test_df["merchant_name"].fillna("UNK").map(freq_map).fillna(0.0)
+
+    # Stacked IF + rule
+    train_if, test_if, train_rule, test_rule = fit_if_and_rule_scores(
+        train_df, test_df, num_cols, cat_cols_for_if=["operation_type", "merchant_name", "dataset"], rs=cfg.random_state
+    )
+    train_df_ext = train_df.copy()
+    test_df_ext = test_df.copy()
+    train_df_ext["if_anomaly_score"], test_df_ext["if_anomaly_score"] = train_if, test_if
+    train_df_ext["rule_score"], test_df_ext["rule_score"] = train_rule, test_rule
+
+    num_cols_ext = num_cols + ["if_anomaly_score", "rule_score"]
+    # Use dataset in categoricals
+    cat_cols_ext = ["operation_type", "dataset"]
+    pos_weight = (train_df_ext["is_fraud"].astype(int).values == 0).sum() / max(1, (train_df_ext["is_fraud"].astype(int).values == 1).sum())
+    pipe = build_pipeline(num_cols_ext, cat_cols_ext, pos_weight, cfg.random_state)
+
+    # Isotonic calibration on last 10% of train
+    calib_split = int(len(train_df_ext) * 0.9)
+    tr_cal = train_df_ext.iloc[:calib_split]
+    te_cal = train_df_ext.iloc[calib_split:]
+    y_tr_cal = tr_cal["is_fraud"].astype(int).values
+    y_te_cal = te_cal["is_fraud"].astype(int).values
+    pipe.fit(tr_cal, y_tr_cal)
+    scores_cal_raw = compute_scores(pipe, te_cal)
+    iso = IsotonicRegression(out_of_bounds="clip")
+    iso.fit(scores_cal_raw, y_te_cal)
+
+    # Test scores
+    scores_raw = compute_scores(pipe, test_df_ext)
+    scores = iso.transform(scores_raw)
+    y_test = test_df_ext["is_fraud"].astype(int).values
+
+    # Overall metrics
+    ap = average_precision_score(y_test, scores)
+    overall = {
+        "rows": int(len(df_sorted)),
+        "train_rows": int(len(train_df_ext)),
+        "test_rows": int(len(test_df_ext)),
+        "fraud_rate_train": float((train_df_ext["is_fraud"].astype(int).values == 1).mean()),
+        "fraud_rate_test": float((y_test == 1).mean()),
+        "average_precision": float(ap),
+        "precision_at": {
+            "0.5%": precision_at_k(y_test, scores, 0.005),
+            "1.0%": precision_at_k(y_test, scores, 0.01),
+            "5.0%": precision_at_k(y_test, scores, 0.05),
+        },
+    }
+
+    # Per-dataset slice metrics
+    per_dataset = {}
+    for ds in ["ULB", "IEEE"]:
+        mask = (test_df_ext["dataset"].astype(str).values == ds)
+        if mask.sum() == 0:
+            continue
+        y_ds = y_test[mask]
+        s_ds = scores[mask]
+        per_dataset[ds] = {
+            "rows": int(mask.sum()),
+            "average_precision": float(average_precision_score(y_ds, s_ds)),
+            "precision_at": {
+                "0.5%": precision_at_k(y_ds, s_ds, 0.005),
+                "1.0%": precision_at_k(y_ds, s_ds, 0.01),
+                "5.0%": precision_at_k(y_ds, s_ds, 0.05),
+            },
+        }
+
+    # Per-dataset thresholds export (per-category within dataset)
+    thresholds_by_dataset: Dict[str, Dict[str, Dict[str, float]]] = {}
+    for frac in cfg.export_alert_fracs:
+        key = str(frac)
+        thresholds_by_dataset[key] = {}
+        for ds in ["ULB", "IEEE"]:
+            mask = (test_df_ext["dataset"].astype(str).values == ds)
+            if mask.sum() == 0:
+                continue
+            thrs = per_category_thresholds(scores[mask], y_test[mask], test_df_ext.loc[mask, "operation_type"].astype(str).values, frac)
+            thresholds_by_dataset[key][ds] = thrs
+
+    return {"overall": overall, "per_dataset": per_dataset, "thresholds_by_dataset": thresholds_by_dataset}
 
 
 def main():
@@ -472,6 +868,67 @@ def main():
     final_summary = train_eval_and_calibrate(df, num_cols, cat_cols, cfg)
     (cfg.out_dir / "ulb_gbdt_enhanced_summary.json").write_text(json.dumps(final_summary, indent=2))
     print("Wrote", cfg.out_dir / "ulb_gbdt_enhanced_summary.json")
+
+    # Export threshold files for serving (per-category)
+    for frac in cfg.export_alert_fracs:
+        key = str(frac)
+        thr_map = final_summary.get("thresholds", {}).get(key, {})
+        if thr_map:
+            out_path = cfg.out_dir / f"gbdt_per_category_thresholds_{str(frac).replace('.', 'p')}.json"
+            out_path.write_text(json.dumps(thr_map, indent=2))
+            print("Wrote", out_path)
+
+    # Export SHAP artifacts as standalone for analysts
+    shap_block = final_summary.get("shap", {})
+    if shap_block and isinstance(shap_block, dict):
+        (cfg.out_dir / "ulb_gbdt_shap_global.json").write_text(json.dumps(shap_block.get("global_importance", []), indent=2))
+        (cfg.out_dir / "ulb_gbdt_shap_top_alerts.json").write_text(json.dumps(shap_block.get("top_alerts", []), indent=2))
+        print("Wrote", cfg.out_dir / "ulb_gbdt_shap_global.json")
+        print("Wrote", cfg.out_dir / "ulb_gbdt_shap_top_alerts.json")
+
+    # Evaluate on ULB fraudTest as later-time holdout
+    ulbtest_summary = evaluate_on_ulb_test(df, num_cols, cat_cols, cfg)
+    (cfg.out_dir / "ulb_gbdt_enhanced_ulbtest_summary.json").write_text(json.dumps(ulbtest_summary, indent=2))
+    print("Wrote", cfg.out_dir / "ulb_gbdt_enhanced_ulbtest_summary.json")
+
+    # Time-aware HP tuning (small grid)
+    tuning = time_aware_hp_tuning(df, num_cols, cat_cols, cfg)
+    (cfg.out_dir / "ulb_gbdt_tuning.json").write_text(json.dumps(tuning, indent=2))
+    print("Wrote", cfg.out_dir / "ulb_gbdt_tuning.json")
+
+    # Combined ULB + IEEE evaluation
+    combined = train_eval_on_combined_ulb_ieee(cfg.row_limit, 300_000, cfg)
+    (cfg.out_dir / "ulb_ieee_gbdt_enhanced_summary.json").write_text(json.dumps(combined, indent=2))
+    print("Wrote", cfg.out_dir / "ulb_ieee_gbdt_enhanced_summary.json")
+
+    # Export per-dataset thresholds for serving
+    thrs_ds = combined.get("thresholds_by_dataset", {})
+    for frac_key, ds_map in thrs_ds.items():
+        for ds, thrs in ds_map.items():
+            out_path = cfg.out_dir / f"gbdt_thresholds_{ds}_{str(frac_key).replace('.', 'p')}.json"
+            out_path.write_text(json.dumps(thrs, indent=2))
+            print("Wrote", out_path)
+
+    # Versioned serving config (example v1) using ULB 0.5% thresholds
+    serving_cfg = {
+        "model": {
+            "type": "HistGradientBoostingClassifier",
+            "hyperparams": {"max_depth": 8, "learning_rate": 0.1, "l2_regularization": 0.003},
+            "calibration": "isotonic",
+        },
+        "thresholds": {
+            "ulb_per_category@0.5%": f"{cfg.out_dir}/gbdt_per_category_thresholds_0p005.json",
+            "ieee_per_category@0.5%": f"{cfg.out_dir}/gbdt_thresholds_IEEE_0p005.json",
+        },
+        "artifacts": {
+            "summary": f"{cfg.out_dir}/ulb_gbdt_enhanced_summary.json",
+            "cv": f"{cfg.out_dir}/ulb_gbdt_cv.json",
+            "tuning": f"{cfg.out_dir}/ulb_gbdt_tuning.json",
+            "shap_global": f"{cfg.out_dir}/ulb_gbdt_shap_global.json",
+        },
+    }
+    (cfg.out_dir / "serving_config_v1.json").write_text(json.dumps(serving_cfg, indent=2))
+    print("Wrote", cfg.out_dir / "serving_config_v1.json")
 
 
 if __name__ == "__main__":

@@ -110,6 +110,26 @@ CV folds:
 Calibrated per-category thresholds saved in `reports/phase2/ulb_gbdt/ulb_gbdt_enhanced_summary.json`.
 ```
 
+ULB later-period holdout (fraudTest.csv)
+```
+AP: 0.8616
+precision@0.5%: 0.6566
+precision@1.0%: 0.3655
+precision@5.0%: 0.0764
+Notes: lower base rate (~0.386%) and temporal drift cause expected drop; per-category calibration remains effective.
+```
+
+Combined ULB + IEEE (with `dataset` indicator)
+```
+overall (test mostly IEEE):
+  AP: 0.1458
+  precision@0.5%: 0.338
+  precision@1.0%: 0.305
+  precision@5.0%: 0.2082
+per-dataset (IEEE slice): same as overall above
+Notes: different label prevalence and feature space; despite lower AP, top-k precision at 5% is strong. Next: enrich IEEE feature mapping and calibrate per-dataset thresholds.
+```
+
 ---
 
 ### Why this stack
@@ -134,5 +154,28 @@ Artifacts
 - Enhanced summary: `reports/phase2/ulb_gbdt/ulb_gbdt_enhanced_summary.json`
 - Time-aware CV: `reports/phase2/ulb_gbdt/ulb_gbdt_cv.json`
 - Overall ablation: `reports/phase2/ulb_gbdt/ulb_gbdt_ablation_overall.json`
+- ULB later holdout: `reports/phase2/ulb_gbdt/ulb_gbdt_enhanced_ulbtest_summary.json`
+- Per-category thresholds (serving):
+  - `reports/phase2/ulb_gbdt/gbdt_per_category_thresholds_0p005.json`
+  - `reports/phase2/ulb_gbdt/gbdt_per_category_thresholds_0p01.json`
+- Hyperparameter tuning (time-aware): `reports/phase2/ulb_gbdt/ulb_gbdt_tuning.json`
+ - Combined ULB+IEEE: `reports/phase2/ulb_gbdt/ulb_ieee_gbdt_enhanced_summary.json`
+
+Serving thresholds guidance
+- Start with 0.5% per-category thresholds; cap per-category/day alerts; adjust gradually based on shadow results.
+- Apply isotonic-calibrated scores for thresholding stability.
+
+Best CV params (small grid)
+```
+max_depth=8, min_samples_leaf=20, learning_rate=0.1, l2_regularization=0.003
+AP_mean (two folds): 0.9313
+```
+
+Serving config and shadow
+- Config: `reports/phase2/ulb_gbdt/serving_config_v1.json`
+- Shadow scorer: `src/fraud_mvp/shadow_score.py`
+- Current outputs (ULB fraudTest @0.5%):
+  - CSV: `reports/phase2/ulb_gbdt/shadow_alerts_ulb.csv`
+  - JSON: `reports/phase2/ulb_gbdt/shadow_alerts_ulb.json`
 
 

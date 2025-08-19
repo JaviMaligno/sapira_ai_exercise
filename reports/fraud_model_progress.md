@@ -138,6 +138,53 @@ Artifacts added:
 - `reports/phase2/ulb_gbdt/ulb_gbdt_cv.json`
 - `reports/phase2/ulb_gbdt/ulb_gbdt_ablation_overall.json`
 
+ULB later-period holdout (fraudTest.csv)
+```
+AP: 0.8616
+P@0.5%: 0.6566
+P@1.0%: 0.3655
+P@5.0%: 0.0764
+```
+
+Threshold exports (serving configs)
+- `reports/phase2/ulb_gbdt/gbdt_per_category_thresholds_0p005.json`
+- `reports/phase2/ulb_gbdt/gbdt_per_category_thresholds_0p01.json`
+
+Hyperparameter tuning (time-aware CV)
+```
+best:
+  max_depth: 8
+  min_samples_leaf: 20
+  learning_rate: 0.1
+  l2_regularization: 0.003
+  AP_mean: 0.9313 (two folds)
+```
+
+Combined ULB + IEEE (with `dataset` indicator)
+```
+overall:
+  AP: 0.1458
+  P@0.5%: 0.338
+  P@1.0%: 0.305
+  P@5.0%: 0.2082
+per-dataset (IEEE test slice): same as overall above
+```
+
+Decision:
+- Keep dataset indicator; proceed to enrich IEEE feature harmonization and compute per-dataset calibration/thresholds.
+
+Artifacts added:
+- `reports/phase2/ulb_gbdt/ulb_ieee_gbdt_enhanced_summary.json`
+
+Shadow scoring (ULB fraudTest)
+```
+alert_frac: 0.005
+alerts: 4337
+files:
+  csv: reports/phase2/ulb_gbdt/shadow_alerts_ulb.csv
+  json: reports/phase2/ulb_gbdt/shadow_alerts_ulb.json
+```
+
 
 
 #### Labeled sanity-check (ULB, Isolation Forest)

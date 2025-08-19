@@ -172,6 +172,21 @@ The inference pipeline will be simple and fast:
 (Payment JSON) → FeatureLookups → GBDT model → If AnomalyScore > τ₂ OR GBDT_proba > τ₁ → block & queue for manual review
 ```
 
+#### Shadow scoring (how-to)
+
+- Artifacts/config: `reports/phase2/ulb_gbdt/serving_config_v1.json`
+- Script: `src/fraud_mvp/shadow_score.py`
+- Example (ULB fraudTest at 0.5%):
+  ```bash
+  poetry run python src/fraud_mvp/shadow_score.py \
+    --input_csv "/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTest.csv" \
+    --output_csv reports/phase2/ulb_gbdt/shadow_alerts_ulb.csv \
+    --output_json reports/phase2/ulb_gbdt/shadow_alerts_ulb.json \
+    --artifacts_dir reports/phase2/ulb_gbdt \
+    --alert_frac 0.005
+  ```
+- Thresholds: per-category JSONs for ULB/IEEE; caps in `alert_caps_v1.json`.
+
 ---
 
 ## 4 Evaluation & testing
