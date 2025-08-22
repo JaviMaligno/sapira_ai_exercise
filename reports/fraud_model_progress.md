@@ -222,3 +222,8 @@ Targets for precision@5%:
 - MVP: >= 0.05
 - Product: >= 0.10
 - Ideal: >= 0.20
+
+## 2025-08-22 14:45:19Z
+- Added tracked artifacts: per-category thresholds (0.5%, 1%), rule_params, merchant_freq_map for service consumption.
+- Rationale: ensure reproducible serving and align with service artifact loader.
+- Next: mount reports/phase2 to /artifacts in service compose or copy into volume.
