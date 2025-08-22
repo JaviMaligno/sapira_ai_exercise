@@ -15,6 +15,9 @@
 		{
 			"name": "sapira_ai_exercise",
 			"path": "."
+		},
+		{
+			"path": "../fraud-scoring-service"
 		}
 	],
 	"settings": {}

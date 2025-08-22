@@ -1,0 +1,40 @@
+@page {
+  size: A4;
+  margin: 18mm 15mm 18mm 15mm;
+}
+
+body {
+  font-family: sans-serif;
+  line-height: 1.35;
+  font-size: 11pt;
+}
+
+h1, h2, h3 {
+  page-break-after: avoid;
+}
+
+img {
+  max-width: 100%;
+  width: 180mm; /* fit within A4 content width with margins */
+  height: auto;
+  display: block;
+  margin: 8pt auto;
+}
+
+code, pre {
+  font-size: 10pt;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table, th, td {
+  border: 1px solid #ddd;
+}
+
+th, td {
+  padding: 6pt 8pt;
+}
+

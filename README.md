@@ -36,4 +36,8 @@ Notes:
 - ETL supports parquet-only or Postgres writes. When writing to Postgres, ingestion uses COPY for large/wide chunks and handles schema evolution by adding missing TEXT columns as needed.
 - Parquet output is partitioned by `dataset` with multiple `part-000N.parquet` files when chunking.
 
+## Reports
+
+- Model status and current architecture/training/metrics: `reports/model_status.md`
+
 

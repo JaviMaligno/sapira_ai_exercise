@@ -26,6 +26,9 @@ scikit-learn = "^1.5.2"
 polars = { version = "^1.4.1", optional = true }
 dask = { version = "^2024.7.1", optional = true, extras = ["dataframe"] }
 shap = "^0.48.0"
+matplotlib = "^3.10.5"
+markdown = "^3.8.2"
+weasyprint = "^66.0"
 
 [tool.poetry.extras]
 fast = ["polars", "dask"]
