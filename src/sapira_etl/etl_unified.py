@@ -150,6 +150,7 @@ def load_dguard_bank_transactions(mongo_uri: str, limit: Optional[int] = None) -
         db = client[dbname]
         coll = db['bank_transactions']
         proj = {
+            '_id': 0,
             'uuid': 1,
             'user_id': 1,
             'account_id': 1,

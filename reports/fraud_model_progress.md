@@ -18,12 +18,20 @@ This document tracks the status, decisions, and key metrics of the fraud detecti
 
 #### Latest run metrics
 ```
-total_rows: 355
+total_rows: 49
+alerts: 1
+alert_rate: 0.02041 (~2.04%)
+anomaly_tau: 0.08680
+top_rules: { extreme_amount: 1, high_amount: 1, new_merchant_high: 1, rapid_repeats: 0 }
+alerts_per_category: { credit: 1 }
+```
+
+##### Phase 2 shadow scoring (ULB sample, alert_frac=0.005)
+```
 alerts: 3
-alert_rate: 0.00845 (~0.85%)
-anomaly_tau: 0.01683
-top_rules: { extreme_amount: 1, high_amount: 2, new_merchant_high: 1, rapid_repeats: 47 }
-alerts_per_category: { salary: 1, transfer: 1, UNK: 1 }
+files:
+  csv: reports/phase2/ulb_gbdt/shadow_alerts.csv
+  json: reports/phase2/ulb_gbdt/shadow_alerts_summary.json
 ```
 
 #### Notable findings
@@ -34,6 +42,7 @@ alerts_per_category: { salary: 1, transfer: 1, UNK: 1 }
 
 ### Decision log
 
+- 2025-08-21: Re-ran Phase 1 on current Mongo snapshot (49 rows). Confirmed we do not depend on upstream `fraud_score`/`is_suspicious` and continue to compute scores/alerts from our IF+rules stack. Ran Phase 2 shadow scoring on ULB sample; artifacts load and explanations generate successfully. Next: keep per-category thresholding optional given low volume; monitor drift and update thresholds when volume increases.
 - 2025-08-13: Switched Mongo database to `dguard_transactions`; re-ran exploration and source profiling; updated ETL and docs.
 - 2025-08-12: Shipped Phase 1 IF + rules MVP with percentiled anomaly threshold and minimal ruleset.
 - 2025-08-12: Added robust rolling window counts (1h/24h) to handle NaT and unsorted timestamps.
