@@ -84,15 +84,46 @@
 
 - Potential PII in sources:
   - DGuard: user_id, account_id, merchant names, descriptions; possible tokens/IDs in provider_data; emails in contact fields.
-  - ULB/IEEE: names, addresses, device info.
+  - ULB/IEEE: names, addresses, device info, card numbers.
+  - Sparkov/PaySim: SSN, credit card numbers, account identifiers, personal demographics.
 - Current safeguards:
   - ETL writes TEXT to Postgres, does not persist provider tokens; _id excluded from Parquet.
   - Service avoids logging PII and does not write back to Mongo.
-- Anonymization adaptation (if required):
-  - Hash stable identifiers with salt (provided by get_hash_salt) at ETL ingestion (e.g., hash user_id/account_id/merchant_name into tokens), keep lookup maps off-line if re-identification needed.
-  - Redact free-text descriptions/categories or tokenize to frequency buckets.
-  - Replace merchant_name with categorical codes via vocabulary maps.
-  - Apply k-anonymity style minimum-count thresholds before publishing aggregates.
+
+### Enhanced PII Protection Framework
+
+**Cryptographic Tokenization:**
+- Use HMAC-SHA256 with environment-specific secret keys (KMS/HSM managed)
+- Implement versioned key rotation with backward compatibility for historical data
+- Apply different keys per environment to prevent cross-environment linkage
+- For low-entropy fields, use HMAC to prevent rainbow/dictionary attacks
+
+**Data Classification and Handling:**
+- **Direct identifiers**: Hash immediately at ingestion (SSN, card numbers, account IDs)
+- **Quasi-identifiers**: Apply k-anonymity (k≥10) on demographic combinations
+- **Free-text fields**: Redact patterns (emails, PAN fragments) before persistence; extract signals via allowlisted regex flags
+- **IP addresses**: Store only coarse geo/ASN; never persist raw IP
+
+**Pseudonymization vs Anonymization:**
+- Current approach is pseudonymization under GDPR/CCPA (still personal data)
+- Maintain access controls, audit logs, and legal basis documentation
+- Implement data subject request handling with token-based deletion paths
+
+**Operational Safeguards:**
+- Encrypt at rest and in transit for all data stores
+- Block PII patterns in application logs and error traces
+- Unit tests that fail if PII-shaped patterns appear in exports/logs
+- Define retention windows with automated purge processes
+
+**Aggregate Publishing Controls:**
+- Enforce minimum group sizes (k≥10) on published analytics
+- Apply noise injection or rounding to prevent inference attacks
+- Consider differential privacy for highly sensitive aggregates
+
+**Model Training Considerations:**
+- Balance privacy protection with model performance
+- Use frequency/aggregate encodings over raw tokens where signals are needed
+- Maintain offline lookup maps with restricted access for merchant intelligence
 
 ## Limitations and risks
 
@@ -106,6 +137,32 @@
 - SHAP: reports/phase2/ulb_gbdt/shap_top_features.json (and plots when available: shap_summary_beeswarm.png, shap_importance_bar.png)
 - Phase 1 outputs: reports/phase1/alerts_phase1.csv, alerts_phase1_summary.json
 - Service: fraud-scoring-service (FastAPI) using remote Mongo (Railway) with field normalization and sort/limit.
+
+## Next Steps and Implementation Gaps
+
+### Missing/Partial Implementation
+- **Transaction deduplication**: No explicit deduplication in ETL or Phase 1 pipeline
+- **Operation type normalization**: Inconsistent lowercase/variant mapping for DGuard operation_type field
+- **Currency handling**: No normalization or FX conversion; currency used as raw categorical
+- **Global merchant frequency for DGuard**: Phase 1 builds merchant_vocab.json but lacks global frequency map artifact for scoring
+- **Calendar enrichment**: Missing weekend/holiday flags beyond basic dow/is_night features
+- **Advanced drift monitoring**: Basic quantile/missingness logging present; need PSI or rank-stability metrics
+- **Analyst feedback loop**: No mechanism for label collection or weekly review workflow integration
+
+### Optional Enrichments (Future Considerations)
+- BIN-to-brand/country mapping for card transactions
+- MCC/category lookup tables for merchant classification
+- IP-to-ASN mapping for geographical risk assessment
+
+### Already Implemented
+- Event time parsing with UTC normalization
+- Robust z-score with winsorization per category
+- Velocity and novelty feature engineering
+- Per-account statistical features
+- Per-category thresholds with global fallback and τ clamping
+- Alert volume controls per (account, merchant, day)
+- Basic drift logging infrastructure
+- Phase 2 shadow scoring with calibrated thresholds on ULB/IEEE datasets
 
 ---
 

@@ -259,3 +259,43 @@ Notes:
 - Observability: Grafana/Prometheus or lightweight logging + notebooks; alerting on drift/volume.
 
 This plan gets a working unsupervised MVP into production quickly with clear rule-based safety nets, while laying the groundwork to incorporate supervised learning using ULB/IEEE and DGuard labels for a substantially stronger Phase 2 hybrid system.
+
+---
+
+### Current Implementation Status vs Plan
+
+#### Completed Phase 1 Components
+- ✅ DGuard data extraction and point-in-time feature engineering
+- ✅ Isolation Forest training with contamination handling
+- ✅ Basic rules implementation (high amount, velocity, novelty)
+- ✅ Anomaly score thresholding with per-category fallback
+- ✅ Alert volume controls and drift monitoring (basic)
+- ✅ FastAPI serving infrastructure with MongoDB integration
+
+#### Completed Phase 2 Components  
+- ✅ Supervised GBDT training on ULB/IEEE datasets
+- ✅ Feature stacking (IF anomaly score + rule score)
+- ✅ Calibrated probability outputs with isotonic regression
+- ✅ Per-category threshold optimization
+- ✅ SHAP explainability and global feature importance
+- ✅ Shadow scoring pipeline for validation
+
+#### Implementation Gaps Identified
+
+**Phase 1 Gaps:**
+- ❌ **Transaction deduplication**: No explicit dedupe in ETL pipeline
+- ❌ **Operation type normalization**: Inconsistent lowercase/variant mapping
+- ❌ **Currency handling**: No FX conversion or normalization beyond categorical
+- ❌ **Global merchant frequency artifact**: merchant_vocab.json built but no frequency map for DGuard scoring
+- ❌ **Enhanced calendar features**: Missing weekend/holiday flags beyond basic time features
+
+**Phase 2 Gaps:**
+- ❌ **Advanced drift monitoring**: Need PSI/rank-stability metrics beyond basic quantile tracking  
+- ❌ **Analyst feedback loop**: No workflow for label collection or weekly review integration
+- ❌ **Domain adaptation refinement**: Limited fine-tuning strategy for DGuard vs ULB/IEEE differences
+
+**Optional Future Enhancements:**
+- BIN-to-brand/country mapping for enhanced merchant intelligence
+- MCC/category lookup tables for transaction classification
+- IP geolocation and ASN mapping for fraud patterns
+- Feature store migration for train-serve consistency

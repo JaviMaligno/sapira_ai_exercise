@@ -47,7 +47,31 @@ This document describes how we will normalize and consolidate multiple heterogen
 
 - Contains direct PII: ULB, Sparkov (names, address, DOB, job, `cc_num`, `ssn`), DGuard (accounts, names within owners, KYC docs).
 - Pseudonymous/derived: IEEE (card1–6, email domains, device), BAF (demographics/flags), PaySim (synthetic IDs only).
-- Policy: hash or drop direct identifiers before model training; keep raw for lookup only in a separate, access-controlled store.
+
+### Enhanced PII Handling Policy
+
+**Cryptographic Protection:**
+- Use HMAC-SHA256 with environment-specific keys (KMS/HSM managed)
+- Implement versioned key rotation with backward compatibility
+- Apply different salt/key per environment to prevent cross-linkage
+- For low-entropy fields (short IDs), HMAC prevents dictionary attacks
+
+**Data Classification:**
+- **Direct identifiers** (SSN, PAN, account numbers): Hash immediately at ingestion
+- **Quasi-identifiers** (demographics): Apply k-anonymity constraints (k≥10)
+- **Free-text fields**: Redact PII patterns; extract signals via allowlisted features only
+- **IP/location data**: Store coarse geo/ASN; never persist raw IP addresses
+
+**Operational Safeguards:**
+- Encrypt all data stores at rest and in transit
+- Implement PII pattern blocking in logs and error traces
+- Unit tests that fail on PII leakage in exports/outputs
+- Define retention policies with automated purge capabilities
+
+**Compliance Framework:**
+- Treat as pseudonymization (not anonymization) under GDPR/CCPA
+- Maintain access controls, audit trails, and legal basis documentation
+- Implement data subject request handling with token-based deletion
 
 ## Unified Schema (wide, nullable)
 
@@ -201,7 +225,7 @@ Below, “→” indicates target column.
 
 - Standardize dtypes: numeric to float32/int32 where sensible; booleans to int8 {0,1}
 - Time: compute `event_time_ts` (UTC, seconds); keep a human-readable `event_time_str` when present; for IEEE keep `TransactionDT` raw as `event_time_ts_raw`
-- Hashing: compute stable SHA-256 for PII (`card_token_hash`, `customer_id_hash`, `account_id_hash`) with a project salt
+- Hashing: compute stable HMAC-SHA256 for PII (`card_token_hash`, `customer_id_hash`, `account_id_hash`) with environment-specific keys
 - Normalization: trim strings, lowercase domains/types, standardize categories
 - Namespacing: prefix IEEE engineered fields to avoid clashes
 - Provenance: set `dataset`, `source_row_id`
@@ -217,12 +241,17 @@ Below, “→” indicates target column.
 # venv activation and requirements omitted here for brevity
 import pandas as pd
 import numpy as np
+import hmac
 from hashlib import sha256
+import os
 
-def h(x, salt):
+def h(x, key=None):
+    """HMAC-SHA256 hashing for PII tokenization"""
     if pd.isna(x):
         return np.nan
-    return sha256((salt + str(x)).encode()).hexdigest()
+    if key is None:
+        key = os.getenv('FRAUD_PII_KEY', 'default-dev-key').encode()
+    return hmac.new(key, str(x).encode(), sha256).hexdigest()
 
 # Example: IEEE train load + identity join
 tx = pd.read_csv('/home/javier/repos/datasets/ieee-fraud-detection/train_transaction.csv')
@@ -233,7 +262,7 @@ df.rename(columns={'TransactionID':'transaction_id', 'isFraud':'is_fraud', 'Tran
                    'R_emaildomain':'email_domain_receiver', 'DeviceType':'device_type',
                    'DeviceInfo':'device_info'}, inplace=True)
 df['dataset'] = 'ieee_train'
-df['card_token_hash'] = df['card1'].apply(lambda v: h(v, 'SALT'))
+df['card_token_hash'] = df['card1'].apply(h)
 ```
 
 ```python
@@ -243,7 +272,7 @@ sparkov.rename(columns={'trans_num':'transaction_id','unix_time':'event_time_ts'
                         'category':'transaction_type','amt':'amount','merchant':'merchant_name',
                         'merch_lat':'merchant_lat','merch_long':'merchant_long',
                         'is_fraud':'is_fraud'}, inplace=True)
-sparkov['card_token_hash'] = sparkov['cc_num'].apply(lambda v: h(v, 'SALT'))
+sparkov['card_token_hash'] = sparkov['cc_num'].apply(h)
 sparkov['dataset'] = 'sparkov_tx'
 ```
 
@@ -278,8 +307,8 @@ dg['dataset'] = 'dguard_tx'
 ## Quality and Caveats
 
 - Domain shift: BAF (application risk) vs IEEE/ULB/Sparkov/PaySim (transaction logs) vs DGuard (bank ops + risk). Use `dataset` as a feature and/or train per-domain models.
-- Label availability: IEEE test has no labels; DGuard has risk signals, not labels. Keep them but don’t train supervised on them.
-- PII governance: hash or drop direct identifiers before modeling. Store salt securely.
+- Label availability: IEEE test has no labels; DGuard has risk signals, not labels. Keep them but don't train supervised on them.
+- PII governance: Use HMAC-SHA256 tokenization with environment-specific keys. Implement key rotation, audit trails, and data subject deletion capabilities. Store keys in KMS/HSM, never in code repositories.
 
 ## Deliverables
 
