@@ -262,6 +262,44 @@ This plan gets a working unsupervised MVP into production quickly with clear rul
 
 ---
 
+### Merchant frequency artifact (generation and use)
+
+Purpose
+- Provide a global popularity prior per merchant, i.e., `P(merchant)` estimated as relative frequency across all transactions. Rare/new merchants often correlate with risk; the frequency prior helps the model or rules interpret novelty.
+
+How it is generated
+- Source: Mongo `dguard_transactions.bank_transactions`.
+- Normalize merchant name to `merchant_name_norm` using lowercase and fallback to `merchant_clean_name`.
+- Aggregate counts by normalized name; convert counts to relative frequency: `freq[merchant] = count / total_count`.
+- Output file: `reports/phase2/ulb_gbdt/merchant_freq_map.json` (JSON object: `{ merchant_name: frequency }`).
+
+Example generation (Python)
+```
+from pymongo import MongoClient
+client = MongoClient(MONGO_URI)
+coll = client["dguard_transactions"]["bank_transactions"]
+pipeline = [
+  {"$set": {"merchant_name_norm": {"$toLower": {"$toString": {"$ifNull": ["$merchant_name", {"$ifNull": ["$merchant_clean_name", "unknown"]}]}}}}},
+  {"$group": {"_id": "$merchant_name_norm", "cnt": {"$sum": 1}}},
+  {"$match": {"_id": {"$ne": None}}}
+]
+rows = list(coll.aggregate(pipeline, allowDiskUse=True))
+S = sum(r["cnt"] for r in rows)
+freq = { r["_id"]: r["cnt"]/S for r in rows if r["_id"] }
+# write freq to merchant_freq_map.json
+```
+
+How it is used
+- The scoring service loads `merchant_freq_map.json` at startup via `app/artifacts/loader.py` and exposes it in the registry.
+- During feature streaming (`app/services/features.py`), each record is enriched with `merchant_freq_global = merchant_freq_map.get(merchant_name, 0.0)`.
+- The value can be used by:
+  - Rules (e.g., flag medium/large amounts at globally rare merchants).
+  - Models (as an input feature) to inform the anomaly/GBDT pipeline about merchant popularity.
+
+Deployment
+- Store alongside other artifacts (thresholds, pipelines) and ensure the artifacts directory is mounted or synced in serving. The service reads it on startup; updating the file and restarting the service refreshes the prior.
+
+
 ### Current Implementation Status vs Plan
 
 #### Completed Phase 1 Components
@@ -284,10 +322,10 @@ This plan gets a working unsupervised MVP into production quickly with clear rul
 
 **Phase 1 Gaps:**
 - ❌ **Transaction deduplication**: No explicit dedupe in ETL pipeline
-- ❌ **Operation type normalization**: Inconsistent lowercase/variant mapping
-- ❌ **Currency handling**: No FX conversion or normalization beyond categorical
-- ❌ **Global merchant frequency artifact**: merchant_vocab.json built but no frequency map for DGuard scoring
-- ❌ **Enhanced calendar features**: Missing weekend/holiday flags beyond basic time features
+- ✅ **Operation type normalization**: Implemented (2025-09-01). Canonical mapping to {debit, credit, transfer, payment} in the scoring service’s Mongo aggregation and ETL. Synonyms maintained via `operation_type_synonyms.json` artifact loaded at startup.
+- ✅ **Currency handling**: Implemented (2025-09-01) as additive fields. Loader accepts `fx_rates.json` (base currency, last_updated, exchange_rates). Service emits `currency_code`, `converted_amount` (amount×rate), `converted_currency`, and `fx_last_updated` when artifact present. Current model is unchanged; retraining required to leverage converted_amount.
+- ✅ **Global merchant frequency artifact**: Implemented (2025-09-01). `merchant_freq_map.json` generated from Mongo global counts; loaded at startup and exposed as `merchant_freq_global` for rules/model features.
+- ✅ **Enhanced calendar features**: Implemented weekend flag (2025-09-01) as `is_weekend` via Mongo `$dayOfWeek`. Optional holiday flag wired via `holiday_dates.json` artifact (`is_holiday` set post-query when present). Not used by current model; available for rules/observability.
 
 **Phase 2 Gaps:**
 - ❌ **Advanced drift monitoring**: Need PSI/rank-stability metrics beyond basic quantile tracking  

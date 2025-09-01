@@ -50,6 +50,21 @@ def load_ulb(path: Path, nrows: Optional[int] = None) -> pd.DataFrame:
         'merch_long': 'merchant_long',
         'is_fraud': 'is_fraud',
     }, inplace=True)
+    # Normalize transaction_type to canonical vocabulary
+    if 'transaction_type' in df.columns:
+        s = df['transaction_type'].astype(str).str.lower().str.strip()
+        mapping = {
+            # debit
+            'withdrawal': 'debit', 'atm_withdrawal': 'debit', 'atm': 'debit', 'cash_withdrawal': 'debit', 'cashout': 'debit', 'cash_out': 'debit', 'cash advance': 'debit',
+            'sepa_direct_debit': 'debit', 'ach_debit': 'debit', 'charge': 'debit', 'fee': 'debit',
+            # credit
+            'deposit': 'credit', 'refund': 'credit', 'cash_deposit': 'credit', 'reversal': 'credit', 'chargeback': 'credit', 'interest': 'credit', 'cash_in': 'credit',
+            # transfer
+            'transfer': 'transfer', 'p2p': 'transfer', 'peer_to_peer': 'transfer', 'wire_transfer': 'transfer', 'bank_transfer': 'transfer', 'internal_transfer': 'transfer', 'sepa_credit_transfer': 'transfer', 'ach_credit': 'transfer', 'remittance': 'transfer',
+            # payment/purchase
+            'payment': 'payment', 'purchase': 'payment', 'pos': 'payment', 'card_present': 'payment', 'card_not_present': 'payment', 'ecommerce': 'payment', 'bill_payment': 'payment', 'merchant_payment': 'payment', 'standing_order': 'payment', 'topup': 'payment', 'top_up': 'payment'
+        }
+        df['transaction_type'] = s.map(mapping).fillna(s)
     return df
 
 
@@ -92,6 +107,13 @@ def load_paysim(path: Path, nrows: Optional[int] = None, epoch0: int = 154630080
         'oldbalanceDest': 'dest_balance_before',
         'newbalanceDest': 'dest_balance_after',
     }, inplace=True)
+    # Normalize transaction_type
+    if 'transaction_type' in df.columns:
+        s = df['transaction_type'].astype(str).str.lower().str.strip()
+        mapping = {
+            'cash_out': 'debit', 'cash_in': 'credit', 'transfer': 'transfer', 'payment': 'payment', 'debit': 'debit', 'credit': 'credit'
+        }
+        df['transaction_type'] = s.map(mapping).fillna(s)
     # derive event_time_ts from step (hours)
     if 'step' in df.columns:
         df['event_time_ts'] = epoch0 + df['step'].astype(int) * 3600
@@ -135,6 +157,21 @@ def load_sparkov_transactions(base_dir: Path, nrows: Optional[int] = None) -> li
         for k, v in rename_map.items():
             if k in df.columns:
                 df.rename(columns={k: v}, inplace=True)
+        # Normalize transaction_type
+        if 'transaction_type' in df.columns:
+            s = df['transaction_type'].astype(str).str.lower().str.strip()
+            mapping = {
+                # debit
+                'withdrawal': 'debit', 'atm_withdrawal': 'debit', 'atm': 'debit', 'cash_withdrawal': 'debit', 'cashout': 'debit', 'cash_out': 'debit', 'cash advance': 'debit',
+                'sepa_direct_debit': 'debit', 'ach_debit': 'debit', 'charge': 'debit', 'fee': 'debit',
+                # credit
+                'deposit': 'credit', 'refund': 'credit', 'cash_deposit': 'credit', 'reversal': 'credit', 'chargeback': 'credit', 'interest': 'credit', 'cash_in': 'credit',
+                # transfer
+                'transfer': 'transfer', 'p2p': 'transfer', 'peer_to_peer': 'transfer', 'wire_transfer': 'transfer', 'bank_transfer': 'transfer', 'internal_transfer': 'transfer', 'sepa_credit_transfer': 'transfer', 'ach_credit': 'transfer', 'remittance': 'transfer',
+                # payment/purchase
+                'payment': 'payment', 'purchase': 'payment', 'pos': 'payment', 'card_present': 'payment', 'card_not_present': 'payment', 'ecommerce': 'payment', 'bill_payment': 'payment', 'merchant_payment': 'payment', 'standing_order': 'payment', 'topup': 'payment', 'top_up': 'payment'
+            }
+            df['transaction_type'] = s.map(mapping).fillna(s)
         df['dataset'] = 'sparkov_tx'
         frames.append(df)
     return frames

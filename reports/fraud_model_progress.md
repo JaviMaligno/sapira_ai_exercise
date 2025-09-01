@@ -41,6 +41,13 @@ files:
 ---
 
 ### Decision log
+- 2025-09-01: Implemented canonical transaction/operation type normalization. Online service now maps various synonyms to a stable vocabulary {debit, credit, transfer, payment} in the Mongo aggregation (used for filtering and `fraud_params` joins). Offline ETL applies the same normalization to ULB, PaySim, and Sparkov sources. Rationale: reduce category sparsity and align per-category thresholds/features.
+  - Added `operation_type_synonyms.json` artifact to artifacts dir; service loads it on startup. This allows synonym updates without code changes. Validated end-to-end with seeded data and synonym filter (`cash_out` → `debit`).
+
+- 2025-09-01: Generated global merchant frequency artifact (`merchant_freq_map.json`).
+  - Method: aggregate counts of normalized merchant names over all transactions; compute relative frequency `count / total`.
+  - Purpose: provide a global popularity prior per merchant to support novelty/risk rules and model features.
+  - Integration: loaded at startup by the service and used to enrich streamed features as `merchant_freq_global`.
 
 - 2025-08-21: Re-ran Phase 1 on current Mongo snapshot (49 rows). Confirmed we do not depend on upstream `fraud_score`/`is_suspicious` and continue to compute scores/alerts from our IF+rules stack. Ran Phase 2 shadow scoring on ULB sample; artifacts load and explanations generate successfully. Next: keep per-category thresholding optional given low volume; monitor drift and update thresholds when volume increases.
 - 2025-08-13: Switched Mongo database to `dguard_transactions`; re-ran exploration and source profiling; updated ETL and docs.
