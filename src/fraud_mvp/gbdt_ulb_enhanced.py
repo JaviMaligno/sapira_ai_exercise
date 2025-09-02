@@ -139,6 +139,11 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     df["hour_cos"] = np.cos(2 * np.pi * df["hour"] / 24.0)
     df["dow"] = df["event_time"].dt.dayofweek
     df["is_night"] = ((df["hour"] < 6) | (df["hour"] >= 22)).astype(int)
+    
+    # Calendar seasonality features (recommended from evaluation)
+    df["month"] = df["event_time"].dt.month
+    df["month_sin"] = np.sin(2 * np.pi * df["month"] / 12.0)
+    df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12.0)
 
     # Initialize enhanced history/recurrence features
     df["txn_count_1h"] = 0.0
@@ -154,6 +159,10 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
     df["merchant_count_7d"] = 0.0
     df["merchant_count_30d"] = 0.0
     df["days_since_last_merchant"] = np.nan
+    
+    # Balance velocity extensions (recommended from evaluation)
+    df["amount_rolling_std_24h"] = 0.0
+    df["amount_rolling_mean_24h"] = 0.0
 
     one_hour = np.timedelta64(3600, "s")
     six_hours = np.timedelta64(6 * 3600, "s")
@@ -208,6 +217,16 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
             df.loc[ix, "txn_count_6h"] = float(len(win_6h))
             df.loc[ix, "txn_count_24h"] = float(len(win_24h))
             df.loc[ix, "amt_sum_24h"] = float(sum(v for _, v in win_24h))
+            
+            # Balance velocity extensions: rolling statistics of amounts
+            if len(win_24h) >= 2:
+                amounts_24h = [v for _, v in win_24h]
+                df.loc[ix, "amount_rolling_std_24h"] = float(np.std(amounts_24h))
+                df.loc[ix, "amount_rolling_mean_24h"] = float(np.mean(amounts_24h))
+            else:
+                # Single transaction or no history
+                df.loc[ix, "amount_rolling_std_24h"] = 0.0
+                df.loc[ix, "amount_rolling_mean_24h"] = float(a)
 
             # Time since last
             if last_time is None:
@@ -298,6 +317,10 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         "hour_cos",
         "dow",
         "is_night",
+        "month_sin",
+        "month_cos",
+        "amount_rolling_std_24h",
+        "amount_rolling_mean_24h",
         "merchant_freq_global",
     ]
     cat_cols = ["operation_type", "dataset"]  # merchant_name via frequency; add dataset indicator
