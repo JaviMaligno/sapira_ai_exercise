@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Dict, List
 
@@ -67,7 +68,7 @@ def load_thresholds(artifacts_dir: Path, dataset: str, alert_frac: float) -> Dic
     if dataset.upper() == "IEEE":
         path = artifacts_dir / f"gbdt_thresholds_IEEE_{key}.json"
     else:
-        path = artifacts_dir / f"gbdt_per_category_thresholds_{key}.json"
+        path = artifacts_dir / f"enhanced_thresholds_{key}.json"
     return json.loads(path.read_text())
 
 
@@ -76,11 +77,15 @@ def main():
     parser.add_argument("--input_csv", required=True)
     parser.add_argument("--output_csv", required=True)
     parser.add_argument("--output_json", required=True)
-    parser.add_argument("--artifacts_dir", default="reports/phase2/ulb_gbdt")
+    parser.add_argument("--artifacts_dir", default=None)
     parser.add_argument("--alert_frac", type=float, default=0.005)
     args = parser.parse_args()
 
-    artifacts_dir = Path(args.artifacts_dir)
+    # Use .env ARTIFACTS_DIR if not provided as argument
+    if args.artifacts_dir is None:
+        artifacts_dir = Path(os.getenv("ARTIFACTS_DIR", "reports/phase2/ulb_gbdt"))
+    else:
+        artifacts_dir = Path(args.artifacts_dir)
 
     # Load artifacts
     pipeline = joblib.load(artifacts_dir / "pipeline.pkl")
