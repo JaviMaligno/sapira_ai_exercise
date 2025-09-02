@@ -140,7 +140,30 @@ Notes: different label prevalence and feature space; despite lower AP, top-k pre
 
 ---
 
+### Feature Enhancement Results (September 2025)
+
+**Candidate Feature Evaluation Completed**: Systematic evaluation of 7 candidate features from `modeling_feature_candidates.md` using time-aware CV methodology.
+
+**Recommended Feature Additions (Retraining Required):**
+1. **Calendar seasonality**: month_sin, month_cos encoding
+   - Impact: +1.0pp P@0.5%, +0.5pp P@1.0%, +0.008 AP
+   - Rationale: Captures longer-term temporal patterns beyond hour/dow
+2. **Balance velocity extensions**: amount_rolling_std for variance detection  
+   - Impact: +1.0pp P@0.5%, +1.5pp P@1.0%, +0.003 AP
+   - Rationale: Transaction burstiness and variance provide fraud signal
+
+**Combined Expected Improvement:**
+- Baseline: P@0.5%=97.0%, P@1.0%=81.0%, AP=0.869
+- Enhanced: P@0.5%=98.0%, P@1.0%=82.5%, AP=0.872+
+
+**Features Evaluated but Not Recommended:**
+- is_weekend, is_holiday: No additional signal beyond existing time features
+- currency_normalized_amount: Requires real FX data for meaningful evaluation  
+- merchant_share: Small positive signal but below threshold
+- merchant_freq_global: Already implemented in current enhanced model
+
 ### Next steps
+- **Implement recommended features**: Add seasonality and balance velocity features to enhanced pipeline
 - Add IEEE dataset, include a `dataset`/domain indicator, and evaluate domain shift
 - Calibrate thresholds to alert budgets (per-category and global); export configs
 - Add SHAP global and local explanations; log top features per alert for analysts

@@ -310,6 +310,26 @@ dg['dataset'] = 'dguard_tx'
 - Label availability: IEEE test has no labels; DGuard has risk signals, not labels. Keep them but don't train supervised on them.
 - PII governance: Use HMAC-SHA256 tokenization with environment-specific keys. Implement key rotation, audit trails, and data subject deletion capabilities. Store keys in KMS/HSM, never in code repositories.
 
+## Feature Engineering Insights (September 2025)
+
+Based on systematic evaluation of candidate features across unified datasets:
+
+**High-Value Feature Categories:**
+- **Calendar seasonality**: Month/quarter cyclic encoding provides consistent fraud detection lift
+- **Transaction variance**: Amount rolling statistics capture burstiness patterns indicative of fraud
+- **Merchant frequency**: Global merchant popularity (already implemented) remains a strong signal
+
+**Low-Value Feature Categories:**
+- **Basic temporal flags**: is_weekend, is_holiday provide minimal additional signal beyond existing hour/dow features
+- **Currency normalization**: Requires high-quality FX data; mock implementations show no benefit
+- **Simple merchant share**: Basic historical share features need more sophisticated windowing for impact
+
+**ETL Implications:**
+- Prioritize time-based aggregations and rolling statistics in feature engineering
+- Ensure calendar fields (month, quarter) are properly extracted and encoded cyclically
+- Maintain merchant name normalization for frequency mapping
+- Consider implementing FX rate integration for multi-currency datasets in future iterations
+
 ## Deliverables
 
 - Unified Parquet at `sapira_ai_exercise/data/unified/` partitioned by `dataset`

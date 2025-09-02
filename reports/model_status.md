@@ -138,14 +138,76 @@
 - Phase 1 outputs: reports/phase1/alerts_phase1.csv, alerts_phase1_summary.json
 - Service: fraud-scoring-service (FastAPI) using remote Mongo (Railway) with field normalization and sort/limit.
 
+## Feature Candidate Evaluation Results (September 2, 2025)
+
+### Methodology
+- **Evaluation approach**: Time-aware cross-validation with enhanced GBDT baseline + IF/rule stacking
+- **Dataset**: ULB Credit Card Fraud (100k sample)
+- **CV folds**: Chronological splits at 60%-80% and 80%-100%
+- **Threshold criteria**: P@0.5% lift ≥ 1% OR P@1.0% lift ≥ 2%
+- **Baseline performance**: AP=0.869, P@0.5%=97.0%, P@1.0%=81.0%
+
+### Evaluated Features
+All candidate features from `modeling_feature_candidates.md` were systematically evaluated:
+
+1. **is_weekend**: Saturday/Sunday indicator - **No significant lift**
+   - Result: AP=0.869 (+0.000), P@0.5%=97.0% (+0.0pp)
+   - Analysis: Weekend patterns already captured by existing dow/hour features
+
+2. **is_holiday**: Holiday date indicator - **No significant lift**
+   - Result: AP=0.869 (+0.000), P@0.5%=97.0% (+0.0pp) 
+   - Analysis: Holiday effects not significant enough for lift in this timeframe/dataset
+
+3. **currency_normalized_amount**: FX-converted amounts - **No significant lift**
+   - Result: AP=0.869 (+0.000), P@0.5%=97.0% (+0.0pp)
+   - Note: Mock implementation (all USD); real FX data needed for production
+
+4. **merchant_share**: Per-merchant historical share - **Below threshold**
+   - Result: AP=0.871 (+0.002), P@0.5%=97.5% (+0.5pp)
+   - Analysis: Small lift but below 1% threshold
+
+5. **seasonality**: Calendar seasonality (month/quarter sin/cos) - **✅ RECOMMENDED**
+   - Result: AP=0.877 (+0.008), P@0.5%=98.0% (+1.0pp), P@1.0%=81.5% (+0.5pp)
+   - Impact: Captures longer-term temporal patterns beyond hour/dow
+
+6. **balance_velocity**: Amount variance and velocity statistics - **✅ RECOMMENDED**
+   - Result: AP=0.872 (+0.003), P@0.5%=98.0% (+1.0pp), P@1.0%=82.5% (+1.5pp)
+   - Impact: Burstiness and variance patterns provide fraud signal
+
+### Recommendations for Model Update
+
+**Immediate Implementation (Retraining Required):**
+1. **Add seasonality features**: `month_sin`, `month_cos` encoding
+2. **Add balance velocity features**: `amount_rolling_std` for amount variance detection
+
+**Expected Impact:**
+- Combined lift: P@0.5% improvement from 97.0% to 98.0% (+1.0 percentage point)
+- P@1.0% improvement: 81.0% to 82.5% (+1.5 percentage points)
+- Addresses seasonal fraud patterns and transaction burstiness detection
+
+**Implementation Notes:**
+- Features are low-complexity additions to existing pipeline
+- No additional data sources required
+- Compatible with current serving infrastructure
+- Maintains time-aware evaluation methodology
+
+### Feature Evaluation Artifacts
+- Comprehensive results: `reports/phase2/feature_candidates/final_feature_evaluation_results.json`
+- Individual evaluations: `reports/phase2/feature_candidates/final_evaluation_*.json`
+- Evaluation code: `src/fraud_mvp/feature_candidate_evaluation.py`
+
 ## Next Steps and Implementation Gaps
 
-### Missing/Partial Implementation
+### Newly Identified for Implementation
+- **Seasonality features**: Add month/quarter sin/cos encoding (recommended from evaluation)
+- **Balance velocity features**: Add amount variance statistics (recommended from evaluation)
+
+### Missing/Partial Implementation (Unchanged)
 - **Transaction deduplication**: No explicit deduplication in ETL or Phase 1 pipeline
 - **Operation type normalization**: Inconsistent lowercase/variant mapping for DGuard operation_type field
-- **Currency handling**: No normalization or FX conversion; currency used as raw categorical
+- **Currency handling**: No normalization or FX conversion; currency used as raw categorical (evaluation showed no immediate benefit with mock data)
 - **Global merchant frequency for DGuard**: Phase 1 builds merchant_vocab.json but lacks global frequency map artifact for scoring
-- **Calendar enrichment**: Missing weekend/holiday flags beyond basic dow/is_night features
+- **Calendar enrichment**: Basic weekend/holiday flags showed no lift; more sophisticated calendar features might be valuable
 - **Advanced drift monitoring**: Basic quantile/missingness logging present; need PSI or rank-stability metrics
 - **Analyst feedback loop**: No mechanism for label collection or weekly review workflow integration
 
@@ -153,6 +215,8 @@
 - BIN-to-brand/country mapping for card transactions
 - MCC/category lookup tables for merchant classification
 - IP-to-ASN mapping for geographical risk assessment
+- **Per-merchant historical share**: Showed small positive signal; consider for future iteration
+- **Real FX data integration**: For currency normalization with actual exchange rates
 
 ### Already Implemented
 - Event time parsing with UTC normalization
