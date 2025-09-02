@@ -321,7 +321,7 @@ Deployment
 #### Implementation Gaps Identified
 
 **Phase 1 Gaps:**
-- ❌ **Transaction deduplication**: No explicit dedupe in ETL pipeline
+- ✅ **Transaction deduplication**: Implemented (2025-09-02). Optional `$group`+`$replaceRoot` dedupe stage in online aggregation controlled by `ENABLE_DEDUPE`/`enable_dedupe`. Unit tests added (see `tests/unit/test_dedupe_and_fx.py`).
 - ✅ **Operation type normalization**: Implemented (2025-09-01). Canonical mapping to {debit, credit, transfer, payment} in the scoring service’s Mongo aggregation and ETL. Synonyms maintained via `operation_type_synonyms.json` artifact loaded at startup.
 - ✅ **Currency handling**: Implemented (2025-09-01) as additive fields. Loader accepts `fx_rates.json` (base currency, last_updated, exchange_rates). Service emits `currency_code`, `converted_amount` (amount×rate), `converted_currency`, and `fx_last_updated` when artifact present. Current model is unchanged; retraining required to leverage converted_amount.
 - ✅ **Global merchant frequency artifact**: Implemented (2025-09-01). `merchant_freq_map.json` generated from Mongo global counts; loaded at startup and exposed as `merchant_freq_global` for rules/model features.
@@ -331,6 +331,10 @@ Deployment
 - ❌ **Advanced drift monitoring**: Need PSI/rank-stability metrics beyond basic quantile tracking  
 - ❌ **Analyst feedback loop**: No workflow for label collection or weekly review integration
 - ❌ **Domain adaptation refinement**: Limited fine-tuning strategy for DGuard vs ULB/IEEE differences
+
+**Ops/Service Hardening Completed:**
+- ✅ Metrics endpoint `/metrics` with scoring and Mongo aggregation latency histograms (2025-09-02). Tests added.
+- ✅ Correlation ID middleware with `X-Request-ID` support; request size limit enforced (2025-09-02). Tests added.
 
 **Optional Future Enhancements:**
 - BIN-to-brand/country mapping for enhanced merchant intelligence
