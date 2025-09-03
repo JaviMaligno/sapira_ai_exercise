@@ -29,6 +29,8 @@ shap = "^0.48.0"
 matplotlib = "^3.10.5"
 markdown = "^3.8.2"
 weasyprint = "^66.0"
+mlflow = {version = "^2.18.0", extras = ["extras"]}
+boto3 = "^1.35.0"
 
 [tool.poetry.extras]
 fast = ["polars", "dask"]
@@ -36,6 +38,11 @@ fast = ["polars", "dask"]
 [tool.poetry.group.dev.dependencies]
 black = "^24.4.2"
 ruff = "^0.5.4"
+pytest = "^8.4.1"
+requests = "^2.32.5"
+docker = "^7.1.0"
+psutil = "^7.0.0"
+python-dotenv = "^1.1.1"
 
 [tool.poetry.scripts]
 etl-run = "sapira_etl.etl_unified:main"

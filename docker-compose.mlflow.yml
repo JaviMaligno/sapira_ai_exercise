@@ -1,0 +1,105 @@
+services:
+  # PostgreSQL database for MLflow backend store
+  mlflow-db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mlflow_db
+      POSTGRES_USER: mlflow_user
+      POSTGRES_PASSWORD: mlflow_password
+      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+    volumes:
+      - mlflow_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow_user -d mlflow_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MLflow Tracking Server
+  mlflow-server:
+    image: python:3.11-slim
+    restart: unless-stopped
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      # MLflow server configuration
+      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow_user:mlflow_password@mlflow-db:5432/mlflow_db
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: ${MLFLOW_DEFAULT_ARTIFACT_ROOT}
+      
+      # AWS credentials for S3 access (from .env file)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      
+    volumes:
+      - ./mlflow-server:/mlflow
+    working_dir: /mlflow
+    command: >
+      bash -c "
+        apt-get update && apt-get install -y curl &&
+        pip install mlflow[extras]==2.18.0 boto3 psycopg2-binary &&
+        mlflow server --backend-store-uri postgresql://mlflow_user:mlflow_password@mlflow-db:5432/mlflow_db --default-artifact-root s3://fraud-scoring-models-936389956156/mlflow-artifacts --host 0.0.0.0 --port 5000
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Optional: MinIO for local S3-compatible storage (alternative to AWS S3)
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    profiles:
+      - local  # Only start with --profile local
+
+  # MinIO client for bucket creation (when using local MinIO)
+  minio-client:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      mc alias set minio http://minio:9000 minioadmin minioadmin123;
+      mc mb minio/fraud-scoring-models || true;
+      mc mb minio/fraud-scoring-models/mlflow-artifacts || true;
+      mc policy set public minio/fraud-scoring-models;
+      "
+    profiles:
+      - local  # Only start with --profile local
+
+volumes:
+  mlflow_postgres_data:
+  minio_data:
+
+networks:
+  default:
+    name: mlflow-network
