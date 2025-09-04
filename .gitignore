@@ -34,3 +34,19 @@ __pycache__
 *.pywz
 *.pyzw
 mlruns
+
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+tfplan
+tfplan.*
+.terraformrc
+terraform.rc
+
+# AWS Production secrets (contains sensitive data)
+aws-production/terraform/terraform.tfstate
+aws-production/terraform/terraform.tfstate.backup
