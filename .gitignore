@@ -50,3 +50,19 @@ terraform.rc
 # AWS Production secrets (contains sensitive data)
 aws-production/terraform/terraform.tfstate
 aws-production/terraform/terraform.tfstate.backup
+
+# MLflow authentication files (contain passwords)
+aws-production/mlflow-auth.ini
+aws-production/mlflow-auth.yaml
+**/mlflow-auth.ini
+**/mlflow-auth.yaml
+
+# Additional security files
+cookies.txt
+**/cookies.txt
+*.pem
+*.key
+*secret*
+*credential*
+.aws/credentials
+.aws/config

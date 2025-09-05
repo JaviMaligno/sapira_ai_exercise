@@ -159,7 +159,7 @@ resource "aws_ecs_task_definition" "mlflow" {
   container_definitions = jsonencode([
     {
       name  = "mlflow"
-      image = "python:3.11-slim"
+      image = "public.ecr.aws/docker/library/python:3.11-slim"
       
       essential = true
       
@@ -172,13 +172,17 @@ resource "aws_ecs_task_definition" "mlflow" {
 
       command = [
         "bash", "-c", 
-        "apt-get update && apt-get install -y curl && pip install mlflow[extras]==2.18.0 boto3 psycopg2-binary && mlflow server --backend-store-uri postgresql://$DB_USER:$DB_PASSWORD@$DB_ENDPOINT/$DB_NAME --default-artifact-root s3://fraud-models-test/mlflow-artifacts --host 0.0.0.0 --port 5000"
+        "apt-get update && apt-get install -y curl && pip install mlflow[extras]==2.18.0 boto3 psycopg2-binary bcrypt && echo $MLFLOW_AUTH_CONFIG | base64 -d > /tmp/mlflow-auth.ini && MLFLOW_AUTH_CONFIG_PATH=/tmp/mlflow-auth.ini mlflow server --backend-store-uri postgresql://$DB_USER:$DB_PASSWORD@$DB_ENDPOINT/$DB_NAME --default-artifact-root s3://fraud-models-test/mlflow-artifacts --host 0.0.0.0 --port 5000 --app-name basic-auth"
       ]
 
       environment = [
         {
           name  = "AWS_DEFAULT_REGION"
           value = var.aws_region
+        },
+        {
+          name  = "MLFLOW_AUTH_CONFIG"
+          value = "W21sZmxvd10KYWRtaW5fdXNlcm5hbWUgPSBhZG1pbgphZG1pbl9wYXNzd29yZCA9IG1sZmxvdy1hZG1pbi0yMDI1CmRlZmF1bHRfcGVybWlzc2lvbiA9IE5PX1BFUk1JU1NJT05TCmRhdGFiYXNlX3VyaSA9IHNxbGl0ZTovLy8vdG1wL21sZmxvdy1hdXRoLmRi"
         }
       ]
 

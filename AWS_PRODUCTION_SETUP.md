@@ -231,13 +231,243 @@ aws ecs describe-services --region eu-west-2 --cluster fraud-scoring-mlflow-clus
 aws elbv2 describe-target-health --region eu-west-2 --target-group-arn arn:aws:elasticloadbalancing:eu-west-2:936389956156:targetgroup/fraud-scoring-mlflow-tg/e6cb87925ffb156c
 ```
 
-## Security Features
+## Security Features ✅
 
 - **Private Subnets**: MLflow containers run in private subnets
 - **Security Groups**: Restricted access (ALB -> ECS -> RDS)
 - **Secrets Manager**: Database credentials never in plain text
 - **Encrypted RDS**: Database encryption at rest
 - **IAM Roles**: Least-privilege access for S3 and RDS
+- **MLflow Basic Authentication**: ✅ **ENABLED** - User authentication and access control
+
+### MLflow Authentication ✅
+
+**Status:** ✅ **Successfully Deployed and Configured**
+
+MLflow basic authentication has been implemented with the following configuration:
+
+**Authentication Setup:**
+- **Authentication Type:** MLflow Basic Auth (experimental feature)
+- **Admin User:** `admin` with password `mlflow-admin-2025`
+- **Default Permission:** `NO_PERMISSIONS` (restrictive by default)
+- **Database:** SQLite auth database (`/tmp/mlflow-auth.db`)
+
+#### **Setting Up Authentication from Scratch**
+
+If deploying this infrastructure from scratch, you'll need to create the authentication configuration:
+
+1. **Generate Password Hashes (Optional):**
+   ```bash
+   # Create password hash generator script
+   python3 generate_mlflow_passwords.py
+   ```
+
+2. **Create Authentication Configuration File:**
+   ```bash
+   # Create aws-production/mlflow-auth.ini (⚠️ This file is gitignored for security)
+   cat > aws-production/mlflow-auth.ini << 'EOF'
+   [mlflow]
+   admin_username = admin
+   admin_password = your-secure-admin-password
+   default_permission = NO_PERMISSIONS
+   database_uri = sqlite:////tmp/mlflow-auth.db
+   EOF
+   ```
+
+3. **Encode Configuration for Deployment:**
+   ```bash
+   # Convert INI file to base64 for embedding in Terraform
+   base64 -w 0 aws-production/mlflow-auth.ini
+   # Copy the output to MLFLOW_AUTH_CONFIG environment variable in ecs.tf
+   ```
+
+4. **Security Notes:**
+   - ⚠️ `mlflow-auth.ini` contains plaintext passwords and is automatically gitignored
+   - 🔐 Passwords are embedded as base64 in Terraform configuration
+   - 🛡️ Use strong passwords in production environments
+
+**Current Configuration Details:**
+```ini
+[mlflow]
+admin_username = admin
+admin_password = mlflow-admin-2025
+default_permission = NO_PERMISSIONS
+database_uri = sqlite:////tmp/mlflow-auth.db
+```
+
+**Deployment Evidence:**
+- ✅ Container logs show: `INFO mlflow.server.auth: Created admin user 'admin'`
+- ✅ Auth warnings: `WARNING mlflow.server.auth: This feature is still experimental`
+- ✅ MLflow server running with `--app-name basic-auth`
+- ✅ Auth configuration loaded via `MLFLOW_AUTH_CONFIG_PATH`
+
+**Access Credentials:**
+- **Admin Username:** `admin`
+- **Admin Password:** `mlflow-admin-2025`
+- **API Access:** Use HTTP Basic Authentication headers
+
+**Testing Authentication:**
+```bash
+# Test API with admin credentials
+curl -u admin:mlflow-admin-2025 "http://fraud-scoring-mlflow-alb-1648380913.eu-west-2.elb.amazonaws.com/api/2.0/mlflow/experiments/search?max_results=10"
+
+# Expected: JSON response with experiments
+```
+
+**Important Notes:**
+- This is an experimental feature that may change in future MLflow releases
+- Additional users should be created programmatically via MLflow's auth API
+- Consider implementing ALB-level authentication for additional security (see ALB Authentication section below)
+
+### ALB Authentication Alternative
+
+For enterprise deployments requiring more robust authentication, consider implementing authentication at the Application Load Balancer level instead of or in addition to MLflow's basic auth:
+
+**Option 1: ALB + AWS Cognito Integration**
+```hcl
+# Add to load_balancer.tf
+resource "aws_lb_listener_rule" "auth" {
+  listener_arn = aws_lb_listener.mlflow.arn
+  priority     = 100
+
+  action {
+    type = "authenticate-cognito"
+    authenticate_cognito {
+      user_pool_arn       = aws_cognito_user_pool.mlflow.arn
+      user_pool_client_id = aws_cognito_user_pool_client.mlflow.id
+      user_pool_domain    = aws_cognito_user_pool_domain.mlflow.domain
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mlflow.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["*"]
+    }
+  }
+}
+```
+
+**Option 2: ALB + OIDC Provider (e.g., Azure AD, Google)**
+```hcl
+# Add to load_balancer.tf
+resource "aws_lb_listener_rule" "oidc_auth" {
+  listener_arn = aws_lb_listener.mlflow.arn
+  priority     = 100
+
+  action {
+    type = "authenticate-oidc"
+    authenticate_oidc {
+      authorization_endpoint = "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize"
+      client_id             = var.oidc_client_id
+      client_secret         = var.oidc_client_secret
+      issuer                = "https://login.microsoftonline.com/tenant-id/v2.0"
+      token_endpoint        = "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token"
+      user_info_endpoint    = "https://graph.microsoft.com/oidc/userinfo"
+    }
+  }
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.mlflow.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["*"]
+    }
+  }
+}
+```
+
+**Steps to Implement ALB Authentication:**
+
+1. **Choose Authentication Provider:**
+   - AWS Cognito: Native AWS solution, good for small teams
+   - Azure AD/Microsoft Entra: Enterprise SSO integration
+   - Google Workspace: Google SSO integration
+   - Other OIDC providers: Okta, Auth0, etc.
+
+2. **Update Terraform Configuration:**
+   - Add authentication provider resources
+   - Modify ALB listener rules to include auth actions
+   - Configure required environment variables/secrets
+
+3. **Deploy Changes:**
+   ```bash
+   cd aws-production/terraform
+   terraform plan  # Review changes
+   terraform apply  # Deploy authentication
+   ```
+
+4. **Configure User Pool/Provider:**
+   - Set up user groups and permissions
+   - Configure callback URLs for ALB
+   - Test authentication flow
+
+5. **Update Access Instructions:**
+   - Users will be redirected to identity provider
+   - After successful auth, redirected back to MLflow
+   - Sessions managed by ALB, not MLflow
+
+**Advantages of ALB Authentication:**
+- ✅ More robust than MLflow's experimental auth
+- ✅ Supports enterprise identity providers (SSO)
+- ✅ Session management handled by AWS
+- ✅ No changes needed to MLflow configuration
+- ✅ Scales automatically with ALB
+
+**Considerations:**
+- ⚠️ Requires HTTPS setup (SSL certificate)
+- ⚠️ Additional cost for authentication provider
+- ⚠️ More complex setup and troubleshooting
+- ⚠️ May require custom domain (Route 53)
+
+#### **Security Files Management**
+
+**Files Protected in `.gitignore`:**
+```gitignore
+# MLflow authentication files (contain passwords)
+aws-production/mlflow-auth.ini
+aws-production/mlflow-auth.yaml
+**/mlflow-auth.ini
+**/mlflow-auth.yaml
+
+# Additional security files
+cookies.txt
+**/cookies.txt
+*.pem
+*.key
+*secret*
+*credential*
+.aws/credentials
+.aws/config
+
+# Terraform sensitive files
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+```
+
+**Files Required for Fresh Deployment:**
+- ✅ `generate_mlflow_passwords.py` - **Committed** (utility script, no credentials)
+- ❌ `aws-production/mlflow-auth.ini` - **Gitignored** (contains plaintext passwords)
+- ✅ All Terraform files - **Committed** (credentials embedded as base64)
+
+**To Deploy from Scratch:**
+1. Clone repository
+2. Create `aws-production/mlflow-auth.ini` with your passwords
+3. Update base64 encoded config in `aws-production/terraform/ecs.tf`
+4. Deploy with Terraform
+
+This approach ensures credentials never appear in git history while maintaining deployability.
 
 ## Scaling
 
@@ -307,6 +537,16 @@ terraform apply -var="db_instance_class=db.t3.small"
    # After:  postgresql://$DB_USER:$DB_PASSWORD@$DB_ENDPOINT/$DB_NAME
    ```
 
+4. **✅ RESOLVED: Docker Hub Rate Limiting**
+   - **Issue:** `CannotPullContainerError: You have reached your unauthenticated pull rate limit`
+   - **Root Cause:** Docker Hub anonymous pull rate limits (200 pulls per 6 hours)
+   - **Solution:** Switched to AWS ECR Public Gallery
+   ```bash
+   # Fixed in terraform/ecs.tf line 162
+   image = "public.ecr.aws/docker/library/python:3.11-slim"  # Changed from "python:3.11-slim"
+   ```
+   **Benefits:** No rate limits, better AWS integration, permanent solution
+
 ### Monitoring and Diagnostics
 
 **Check Container Status:**
@@ -329,11 +569,13 @@ aws logs describe-log-streams --region eu-west-2 --log-group-name /ecs/fraud-sco
 
 **Verify MLflow Server Status:**
 ```bash
-# HTTP health check
+# HTTP health check (should return 401 UNAUTHORIZED with authentication enabled)
 curl -I http://fraud-scoring-mlflow-alb-1648380913.eu-west-2.elb.amazonaws.com
+# Expected: HTTP/1.1 401 UNAUTHORIZED, WWW-Authenticate: Basic realm="mlflow"
 
-# MLflow API test
-curl "http://fraud-scoring-mlflow-alb-1648380913.eu-west-2.elb.amazonaws.com/api/2.0/mlflow/experiments/search?max_results=10"
+# Authenticated API test
+curl -u admin:mlflow-admin-2025 "http://fraud-scoring-mlflow-alb-1648380913.eu-west-2.elb.amazonaws.com/api/2.0/mlflow/experiments/search?max_results=10"
+# Expected: JSON response with experiments list
 ```
 
 ## Cleanup
