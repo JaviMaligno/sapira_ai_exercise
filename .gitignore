@@ -66,3 +66,5 @@ cookies.txt
 *credential*
 .aws/credentials
 .aws/config
+*workspace
+*parquet
