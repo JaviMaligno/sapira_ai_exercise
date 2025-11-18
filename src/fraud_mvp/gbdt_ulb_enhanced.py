@@ -19,8 +19,8 @@ import joblib
 import shap
 
 
-ULB_PATH = Path("/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTrain.csv")
-ULB_TEST_PATH = Path("/home/javier/repos/datasets/ULB Credit Card Fraud Dataset (European Cardholders)/fraudTest.csv")
+ULB_PATH = Path(__file__).parent.parent.parent / "data" / "fraudTrain.csv"
+ULB_TEST_PATH = Path(__file__).parent.parent.parent / "data" / "fraudTest.csv"
 
 
 @dataclass
@@ -67,6 +67,29 @@ def load_ulb_test() -> pd.DataFrame:
     )
     df["event_time"] = pd.to_datetime(df["event_time_ts"], unit="s", utc=True)
     df["dataset"] = "ULB"
+    return df
+
+
+def load_ulb_enriched(limit: int = None) -> pd.DataFrame:
+    """Load enriched ULB parquet with simulated enrichment features."""
+    parquet_path = Path(__file__).parent.parent.parent / "data" / "unified_enriched" / "ulb_train_enriched.parquet"
+
+    if not parquet_path.exists():
+        raise FileNotFoundError(
+            f"Enriched dataset not found: {parquet_path}\n"
+            f"Generate it with: poetry run python scripts/simulate_enrichment.py"
+        )
+
+    df = pd.read_parquet(parquet_path)
+
+    if limit:
+        df = df.head(limit)
+
+    # Ensure event_time is datetime
+    if "event_time" not in df.columns and "event_time_ts" in df.columns:
+        df["event_time"] = pd.to_datetime(df["event_time_ts"], unit="s", utc=True)
+
+    print(f"Loaded enriched dataset: {len(df):,} rows, {len(df.columns)} columns")
     return df
 
 
@@ -323,7 +346,25 @@ def engineer_enhanced(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[s
         "amount_rolling_mean_24h",
         "merchant_freq_global",
     ]
+
+    # Enrichment features - only keeping top performers based on SHAP analysis
+    # Removed features with SHAP=0: has_category, is_chain_merchant, has_location,
+    # has_coordinates, is_fully_enriched, is_claude_enriched, has_business_hours
+    enrichment_numeric = [
+        "is_subscription_merchant",      # SHAP rank #7 - strong performer
+        "enrichment_confidence_score",   # SHAP rank #26 - moderate value
+    ]
+
+    # Add enrichment features that exist in the DataFrame
+    available_enrichment = [f for f in enrichment_numeric if f in df.columns]
+    if available_enrichment:
+        num_cols = num_cols + available_enrichment
+        print(f"Added {len(available_enrichment)} enrichment features to model")
+
     cat_cols = ["operation_type", "dataset"]  # merchant_name via frequency; add dataset indicator
+
+    # Removed enrichment categorical features (SHAP=0): enrichment_confidence_level, location_country
+
     return df, num_cols, cat_cols
 
 
@@ -878,8 +919,8 @@ def main():
     cfg = Config()
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load and engineer
-    df = load_ulb(cfg.row_limit)
+    # Load enriched data (with simulated enrichment features)
+    df = load_ulb_enriched(cfg.row_limit)
     df, num_cols, cat_cols = engineer_enhanced(df)
 
     # CV

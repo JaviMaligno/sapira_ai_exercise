@@ -492,7 +492,7 @@ def main():
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
     df_enriched.to_parquet(args.output_path, index=False, engine="pyarrow")
 
-    print(f"✓ Enriched dataset saved: {len(df_enriched):,} rows, {len(df_enriched.columns)} columns")
+    print(f"[OK] Enriched dataset saved: {len(df_enriched):,} rows, {len(df_enriched.columns)} columns")
     print(f"  Original columns: {len(df.columns)}")
     print(f"  Enrichment columns added: {len(df_enriched.columns) - len(df.columns)}")
 
