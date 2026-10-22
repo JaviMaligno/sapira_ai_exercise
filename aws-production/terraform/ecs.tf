@@ -159,7 +159,7 @@ resource "aws_ecs_task_definition" "mlflow" {
   container_definitions = jsonencode([
     {
       name  = "mlflow"
-      image = "public.ecr.aws/docker/library/python:3.11-slim"
+      image = "public.ecr.aws/docker/library/python:3.11.17-slim"
       
       essential = true
       
@@ -172,7 +172,7 @@ resource "aws_ecs_task_definition" "mlflow" {
 
       command = [
         "bash", "-c", 
-        "apt-get update && apt-get install -y curl && pip install mlflow[extras]==2.18.0 boto3 psycopg2-binary bcrypt && echo $MLFLOW_AUTH_CONFIG | base64 -d > /tmp/mlflow-auth.ini && MLFLOW_AUTH_CONFIG_PATH=/tmp/mlflow-auth.ini mlflow server --backend-store-uri postgresql://$DB_USER:$DB_PASSWORD@$DB_ENDPOINT/$DB_NAME --default-artifact-root s3://fraud-models-test/mlflow-artifacts --host 0.0.0.0 --port 5000 --app-name basic-auth"
+        "apt-get update && apt-get install -y ca-certificates curl && update-ca-certificates && python -m pip install --no-cache-dir --upgrade 'pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' && python -m pip install 'certifi>=2026.10.19' && python -m pip install mlflow[extras]==2.18.0 boto3 psycopg2-binary bcrypt && echo $MLFLOW_AUTH_CONFIG | base64 -d > /tmp/mlflow-auth.ini && MLFLOW_AUTH_CONFIG_PATH=/tmp/mlflow-auth.ini mlflow server --backend-store-uri postgresql://$DB_USER:$DB_PASSWORD@$DB_ENDPOINT/$DB_NAME --default-artifact-root s3://fraud-models-test/mlflow-artifacts --host 0.0.0.0 --port 5000 --app-name basic-auth"
       ]
 
       environment = [
