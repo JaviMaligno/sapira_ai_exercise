@@ -2,6 +2,20 @@
 
 Environment managed with Poetry. Use `docker-compose.yml` to run Postgres.
 
+Use Python 3.11.17 (`.python-version`) and a current trusted CA bundle. The
+application lock retains MLflow 2 and its Azure extras; remaining security
+constraints and the required client/server migration are tracked in
+[the runtime follow-up](docs/security-runtime-followup.md).
+
+Black uses a separate locked environment because AzureML requires pathspec<1,
+while fixed Black requires pathspec>=1. Use uv>=0.13.5:
+
+```bash
+uv run --project tooling/formatting --locked black --check --workers 1 src tests
+```
+
+Do not install the formatter into the application environment.
+
 Commands:
 
 ```bash
